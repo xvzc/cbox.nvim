@@ -3,6 +3,8 @@
 -- consumers (box.lua) operate on Snapshots without touching the buffer
 -- themselves, which keeps rendering pure and easy to test.
 
+local detect = require("cbox.detect")
+
 local M = {}
 
 ---@class Snapshot
@@ -17,12 +19,6 @@ local M = {}
 ---@field below? string      adjacent line below
 ---@field above_row? integer 0-indexed row of `above`
 ---@field below_row? integer 0-indexed row of `below`
-
----@param sel Selection
----@return boolean
-local function is_linewise(sel)
-  return sel.mode == "V" or (sel.mode == "v" and sel.start_line ~= sel.end_line)
-end
 
 -- Capture the buffer state needed by box.wrap / box.unwrap.
 --
@@ -48,7 +44,7 @@ function M.take(sel, bufnr, box_extent)
     start_col = sel.start_col,
     end_col = sel.end_col,
     filetype = vim.bo[bufnr].filetype,
-    is_linewise = is_linewise(sel),
+    is_linewise = detect.is_linewise(sel),
   }
 
   if not box_extent and not snap.is_linewise and sel.start_line > 1 then

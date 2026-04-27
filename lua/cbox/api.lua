@@ -6,6 +6,15 @@ local M = {}
 
 local P = detect.Position
 
+---@param opts? table|string
+---@return table
+local function normalize_opts(opts)
+  if type(opts) == "string" then
+    return { style = opts }
+  end
+  return opts or {}
+end
+
 ---@param edits Edit[]
 ---@param bufnr integer
 local function apply(edits, bufnr)
@@ -40,6 +49,42 @@ local function erase_overlapping(bufnr, boxes)
   return top, bot, result
 end
 
+-- Map a target line (1-indexed buffer row) inside the erased range [top, bot]
+-- to a 0-indexed offset into the post-erase `result.lines`.  Falls back via
+-- `search_dir` ("before" walks earlier rows, "after" walks later rows) when
+-- the exact row was dropped, finally defaulting to the first content row.
+---@param result UnwrapOverlappingResult
+---@param target_line integer
+---@param top integer
+---@param n_orig integer  number of rows in the original range (bot - top + 1)
+---@param search_dir "before"|"after"
+---@return integer
+local function map_inside_offset(result, target_line, top, n_orig, search_dir)
+  local r_offset = target_line - top + 1
+  if r_offset < 1 then
+    r_offset = 1
+  elseif r_offset > n_orig then
+    r_offset = n_orig
+  end
+  if result.row_mapping[r_offset] then
+    return result.row_mapping[r_offset]
+  end
+  if search_dir == "before" then
+    for i = r_offset - 1, 1, -1 do
+      if result.row_mapping[i] then
+        return result.row_mapping[i]
+      end
+    end
+  else
+    for i = r_offset + 1, n_orig do
+      if result.row_mapping[i] then
+        return result.row_mapping[i]
+      end
+    end
+  end
+  return result.content_row_offset_first
+end
+
 -- Strip every overlapping box and re-wrap the resulting trimmed content with
 -- `preset` — used by `M.wrap` when the selection touches existing boxes.
 --
@@ -57,34 +102,8 @@ local function merge_overlapping(sel, bufnr, boxes, preset, presets, opts)
   local top, bot, result = erase_overlapping(bufnr, boxes)
 
   local n_orig = bot - top + 1
-  local function map_row(target_line, search_dir)
-    local r_offset = target_line - top + 1
-    if r_offset < 1 then
-      r_offset = 1
-    elseif r_offset > n_orig then
-      r_offset = n_orig
-    end
-    if result.row_mapping[r_offset] then
-      return result.row_mapping[r_offset]
-    end
-    if search_dir == "before" then
-      for i = r_offset - 1, 1, -1 do
-        if result.row_mapping[i] then
-          return result.row_mapping[i]
-        end
-      end
-    else
-      for i = r_offset + 1, n_orig do
-        if result.row_mapping[i] then
-          return result.row_mapping[i]
-        end
-      end
-    end
-    return result.content_row_offset_first
-  end
-
-  local first_offset = map_row(sel.start_line, "after")
-  local last_offset = map_row(sel.end_line, "before")
+  local first_offset = map_inside_offset(result, sel.start_line, top, n_orig, "after")
+  local last_offset = map_inside_offset(result, sel.end_line, top, n_orig, "before")
   if last_offset < first_offset then
     last_offset = first_offset
   end
@@ -145,39 +164,13 @@ local function merge_overlapping_linewise(sel, bufnr, boxes, preset, presets, op
   local n_orig = bot - top + 1
   local row_shift = #result.lines - n_orig
 
-  local function map_inside(target_line, search_dir)
-    local r_offset = target_line - top + 1
-    if r_offset < 1 then
-      r_offset = 1
-    elseif r_offset > n_orig then
-      r_offset = n_orig
-    end
-    if result.row_mapping[r_offset] then
-      return result.row_mapping[r_offset]
-    end
-    if search_dir == "before" then
-      for i = r_offset - 1, 1, -1 do
-        if result.row_mapping[i] then
-          return result.row_mapping[i]
-        end
-      end
-    else
-      for i = r_offset + 1, n_orig do
-        if result.row_mapping[i] then
-          return result.row_mapping[i]
-        end
-      end
-    end
-    return result.content_row_offset_first
-  end
-
   local function map_row(target_line, search_dir)
     if target_line < top then
       return target_line
     elseif target_line > bot then
       return target_line + row_shift
     else
-      return top + map_inside(target_line, search_dir)
+      return top + map_inside_offset(result, target_line, top, n_orig, search_dir)
     end
   end
 
@@ -210,10 +203,7 @@ end
 ---@param opts? BoxOpts|string
 function M.wrap(sel, bufnr, opts)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
-  if type(opts) == "string" then
-    opts = { style = opts }
-  end
-  opts = opts or {}
+  opts = normalize_opts(opts)
   local cfg = require("cbox").config
   local presets = cfg.presets
   local preset = presets[opts.style or cfg.style]
@@ -257,10 +247,7 @@ end
 ---@param opts? BoxOpts|string
 function M.unwrap(sel, bufnr, opts)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
-  if type(opts) == "string" then
-    opts = { style = opts }
-  end
-  opts = opts or {}
+  opts = normalize_opts(opts)
   local presets = require("cbox").config.presets
 
   local boxes = detect.find_boxes(sel, bufnr)

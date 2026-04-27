@@ -349,6 +349,97 @@ end
 ---@param prefix? string       comment prefix to strip from above/below before detection
 ---@param suffix? string       comment suffix (block kind) to strip from above/below
 ---@return { above: string, below: string }|nil
+-- Byte-replace strategy: only structurally valid when above/below have the
+-- same display layout as the content line up to start_col (e.g. existing
+-- border with space-padding that matches the content line's prefix).
+-- Otherwise the byte cols [start_col, end_col] on above/below land at
+-- unrelated positions and the replacement cuts mid-character.
+local function try_byte_replace(
+  above,
+  below,
+  start_col,
+  end_col,
+  content_disp_pre,
+  raw_top,
+  raw_bot
+)
+  if
+    vim.fn.strdisplaywidth(above:sub(1, start_col - 1)) ~= content_disp_pre
+    or vim.fn.strdisplaywidth(below:sub(1, start_col - 1)) ~= content_disp_pre
+    or not is_utf8_start(above:byte(start_col))
+    or not is_utf8_start(above:byte(end_col + 1))
+    or not is_utf8_start(below:byte(start_col))
+    or not is_utf8_start(below:byte(end_col + 1))
+  then
+    return nil
+  end
+  return {
+    above = above:sub(1, start_col - 1) .. raw_top .. above:sub(end_col + 1),
+    below = below:sub(1, start_col - 1) .. raw_bot .. below:sub(end_col + 1),
+  }
+end
+
+-- Display-based splice strategy: locate the disp range that aligns with the
+-- sel on the content row and replace it with raw_top/raw_bot, preserving
+-- anything past it verbatim (so an existing right-side border on above/below
+-- shifts right by the box's expansion).  Handles the case where above/below
+-- have multiple existing borders separated by whitespace gaps and the sel
+-- sits inside one of those gaps — byte-replace can't cope because above/below
+-- have wider chars at different byte offsets than content_line.
+local function try_splice(
+  above,
+  below,
+  box_disp_start,
+  box_disp_inner_end,
+  raw_top,
+  raw_bot
+)
+  local function splice(line)
+    local left_byte = detect.byte_at_disp(line, box_disp_start)
+    if not left_byte then
+      return nil
+    end
+    if vim.fn.strdisplaywidth(line:sub(1, left_byte - 1)) ~= box_disp_start - 1 then
+      return nil
+    end
+    local right_byte = detect.byte_at_disp(line, box_disp_inner_end + 1)
+    if
+      right_byte
+      and vim.fn.strdisplaywidth(line:sub(1, right_byte - 1)) ~= box_disp_inner_end
+    then
+      return nil
+    end
+    return line:sub(1, left_byte - 1), right_byte and line:sub(right_byte) or ""
+  end
+  local left_a, right_a = splice(above)
+  local left_b, right_b = splice(below)
+  if not (left_a and left_b) then
+    return nil
+  end
+  return {
+    above = left_a .. raw_top .. right_a,
+    below = left_b .. raw_bot .. right_b,
+  }
+end
+
+-- Pad-and-append strategy: when both lines end before the box's left edge,
+-- pad with spaces up to that edge and append the border.  Trailing whitespace
+-- on above/below is ignored — padding after the existing border shouldn't
+-- block the merge, and any extra trailing space gets absorbed into the new gap.
+local function try_append(above, below, box_disp_start, raw_top, raw_bot)
+  local rtrim_above = above:gsub("%s+$", "")
+  local rtrim_below = below:gsub("%s+$", "")
+  local dw_a = vim.fn.strdisplaywidth(rtrim_above)
+  local dw_b = vim.fn.strdisplaywidth(rtrim_below)
+  if dw_a >= box_disp_start or dw_b >= box_disp_start then
+    return nil
+  end
+  return {
+    above = rtrim_above .. string.rep(" ", box_disp_start - 1 - dw_a) .. raw_top,
+    below = rtrim_below .. string.rep(" ", box_disp_start - 1 - dw_b) .. raw_bot,
+  }
+end
+
 function M.merge_into_borders(
   above,
   below,
@@ -397,6 +488,7 @@ function M.merge_into_borders(
   -- After wrap, the box's left side sits at display column box_disp_start;
   -- the right side at content_disp_pre + disp_in + 4 (l + " " + content + " " + r).
   local box_disp_start = content_disp_pre + 1
+  local box_disp_inner_end = content_disp_pre + disp_in
   local inner_w = disp_in + 2
 
   local tl, fill, tr = preset[1], preset[2], preset[3]
@@ -404,79 +496,27 @@ function M.merge_into_borders(
   local raw_top = tl .. string.rep(fill, inner_w) .. tr
   local raw_bot = bl .. string.rep(bfill, inner_w) .. br
 
-  local function reattach(result)
-    if has_suffix and result then
-      result.above = result.above .. suffix
-      result.below = result.below .. suffix
-    end
-    return result
-  end
+  local result = try_byte_replace(
+    above,
+    below,
+    start_col,
+    end_col,
+    content_disp_pre,
+    raw_top,
+    raw_bot
+  ) or try_splice(above, below, box_disp_start, box_disp_inner_end, raw_top, raw_bot) or try_append(
+    above,
+    below,
+    box_disp_start,
+    raw_top,
+    raw_bot
+  )
 
-  -- Byte-replace is only structurally valid when above/below have the same
-  -- display layout as the content line up to start_col (e.g. existing border
-  -- with space-padding that matches the content line's prefix).  Otherwise
-  -- the byte cols [start_col, end_col] on above/below land at unrelated
-  -- positions and the replacement cuts mid-character.
-  if
-    vim.fn.strdisplaywidth(above:sub(1, start_col - 1)) == content_disp_pre
-    and vim.fn.strdisplaywidth(below:sub(1, start_col - 1)) == content_disp_pre
-    and is_utf8_start(above:byte(start_col))
-    and is_utf8_start(above:byte(end_col + 1))
-    and is_utf8_start(below:byte(start_col))
-    and is_utf8_start(below:byte(end_col + 1))
-  then
-    return reattach({
-      above = above:sub(1, start_col - 1) .. raw_top .. above:sub(end_col + 1),
-      below = below:sub(1, start_col - 1) .. raw_bot .. below:sub(end_col + 1),
-    })
+  if result and has_suffix then
+    result.above = result.above .. suffix
+    result.below = result.below .. suffix
   end
-
-  -- Display-based splice: locate the disp range that aligns with the sel on
-  -- the content row and replace it with raw_top/raw_bot, preserving anything
-  -- past it verbatim (so an existing right-side border on above/below shifts
-  -- right by the box's expansion).  Handles the case where above/below have
-  -- multiple existing borders separated by whitespace gaps and the sel sits
-  -- inside one of those gaps — byte-replace can't cope because above/below
-  -- have wider chars at different byte offsets than content_line.
-  local box_disp_inner_end = content_disp_pre + disp_in
-  local function splice(line)
-    local left_byte = detect.byte_at_disp(line, box_disp_start)
-    if not left_byte then
-      return nil
-    end
-    if vim.fn.strdisplaywidth(line:sub(1, left_byte - 1)) ~= box_disp_start - 1 then
-      return nil
-    end
-    local right_byte = detect.byte_at_disp(line, box_disp_inner_end + 1)
-    if right_byte and vim.fn.strdisplaywidth(line:sub(1, right_byte - 1)) ~= box_disp_inner_end then
-      return nil
-    end
-    return line:sub(1, left_byte - 1), right_byte and line:sub(right_byte) or ""
-  end
-  local left_a, right_a = splice(above)
-  local left_b, right_b = splice(below)
-  if left_a and left_b then
-    return reattach({
-      above = left_a .. raw_top .. right_a,
-      below = left_b .. raw_bot .. right_b,
-    })
-  end
-
-  -- For append-merge, ignore trailing whitespace on above/below — padding
-  -- after the existing border shouldn't block the merge, and any extra
-  -- trailing space gets absorbed into the new gap.
-  local rtrim_above = above:gsub("%s+$", "")
-  local rtrim_below = below:gsub("%s+$", "")
-  local dw_a = vim.fn.strdisplaywidth(rtrim_above)
-  local dw_b = vim.fn.strdisplaywidth(rtrim_below)
-  if dw_a < box_disp_start and dw_b < box_disp_start then
-    return reattach({
-      above = rtrim_above .. string.rep(" ", box_disp_start - 1 - dw_a) .. raw_top,
-      below = rtrim_below .. string.rep(" ", box_disp_start - 1 - dw_b) .. raw_bot,
-    })
-  end
-
-  return nil
+  return result
 end
 
 -- ===== High-level: Snapshot → Edit[] =====

@@ -240,11 +240,11 @@ local is_linewise = M.is_linewise
 ---@param top_row integer
 ---@param tb_info { left_byte: integer, right_byte: integer, preset: table }
 ---@param top_line string
----@param bufnr integer
+---@param read_line fun(row: integer): string
+---@param count integer
 ---@return Box|nil
-local function build_box(top_row, tb_info, top_line, bufnr)
+local function build_box(top_row, tb_info, top_line, read_line, count)
   local preset = tb_info.preset
-  local count = vim.api.nvim_buf_line_count(bufnr)
 
   local tb_disp_start = vim.fn.strdisplaywidth(top_line:sub(1, tb_info.left_byte - 1)) + 1
   local tb_disp_end =
@@ -255,7 +255,7 @@ local function build_box(top_row, tb_info, top_line, bufnr)
   local bottom_row, matched_bb
 
   for cur = top_row + 1, count do
-    local line = vim.api.nvim_buf_get_lines(bufnr, cur - 1, cur, false)[1] or ""
+    local line = read_line(cur)
 
     local bottoms = parse_borders_on_line(line, cbox.config.presets, true)
     for _, bb in ipairs(bottoms) do
@@ -332,14 +332,23 @@ function M.find_boxes(sel, bufnr)
   local count = vim.api.nvim_buf_line_count(bufnr)
   local linewise = is_linewise(sel)
 
+  -- Lazy single-row reader with a cache: rows visited by both find_boxes
+  -- (top-border scan) and build_box (downward content/bottom walk) are read
+  -- exactly once per find_boxes call.
+  local line_cache = {}
+  local function read_line(row)
+    local cached = line_cache[row]
+    if cached ~= nil then
+      return cached
+    end
+    local line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
+    line_cache[row] = line
+    return line
+  end
+
   local sel_disp_start, sel_disp_end
   if not linewise then
-    local sel_ref_line = vim.api.nvim_buf_get_lines(
-      bufnr,
-      sel.start_line - 1,
-      sel.start_line,
-      false
-    )[1] or ""
+    local sel_ref_line = read_line(sel.start_line)
     sel_disp_start = vim.fn.strdisplaywidth(sel_ref_line:sub(1, sel.start_col - 1)) + 1
     sel_disp_end = vim.fn.strdisplaywidth(sel_ref_line:sub(1, sel.end_col))
   end
@@ -351,10 +360,10 @@ function M.find_boxes(sel, bufnr)
   local scan_end = math.min(count, sel.end_line)
 
   for r = scan_start, scan_end do
-    local top_line = vim.api.nvim_buf_get_lines(bufnr, r - 1, r, false)[1] or ""
+    local top_line = read_line(r)
     local top_borders = parse_borders_on_line(top_line, presets, false)
     for _, tb in ipairs(top_borders) do
-      local box = build_box(r, tb, top_line, bufnr)
+      local box = build_box(r, tb, top_line, read_line, count)
       if box and box.bottom >= sel.start_line and box.top <= sel.end_line then
         local col_overlap = linewise
           or (
