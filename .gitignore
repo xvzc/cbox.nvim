@@ -1,0 +1,13 @@
+# Nix
+.direnv/
+result
+
+# Editor
+.DS_Store
+
+# Local dev
+.deps/
+.nvim/
+prompts/
+.cache/
+.claude/settings.local.json
