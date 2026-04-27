@@ -2,8 +2,8 @@
 -- transformed string lists.  No Neovim buffer API — all functions operate on
 -- plain string lists / tables.
 --
--- Border classification primitives (top_preset / bottom_preset / blockwise_preset)
--- and `byte_at_disp` live in detect.lua; this module imports them.
+-- Border classification primitives (top_preset / blockwise_preset) and
+-- `byte_at_disp` live in detect.lua; this module imports them.
 --
 -- The wrap/unwrap primitives use display columns as their coordinate system —
 -- the same width-aware coordinate that linewise (full-line) and blockwise
@@ -142,7 +142,6 @@ end
 ---@field lines string[]            cleaned lines (border-only rows dropped)
 ---@field content_row_offset_first integer 0-indexed offset into `lines` of the
 ---                                  first row that formerly held box content
----@field content_row_offset_last integer  0-indexed offset of the last such row
 ---@field content_byte_range { start_col: integer, end_col: integer }
 ---                                  trimmed content's byte range on the first content row
 ---@field row_mapping integer[]     row_mapping[r_offset] = 0-indexed offset in
@@ -279,12 +278,11 @@ function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype)
   -- Keep every content row; drop border-only rows that are now blank.  Rows
   -- between two stacked boxes are border-only for both, so they collapse out.
   local final = {}
-  local content_offset_first, content_offset_last
+  local content_offset_first
   local row_mapping = {}
   for i, line in ipairs(processed) do
     if is_content_row[i] then
       content_offset_first = content_offset_first or #final
-      content_offset_last = #final
       row_mapping[i] = #final
       table.insert(final, line)
     elseif not is_effectively_blank(line, filetype) then
@@ -305,7 +303,6 @@ function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype)
   return {
     lines = final,
     content_row_offset_first = content_offset_first or 0,
-    content_row_offset_last = content_offset_last or 0,
     content_byte_range = {
       start_col = #prefix + #leading_ws + 1,
       end_col = #prefix + #leading_ws + #trimmed,
@@ -321,34 +318,6 @@ local function is_utf8_start(b)
   return b == nil or b <= 0x7F or b >= 0xC0
 end
 
--- Extend the new box's top/bottom borders into the rows above/below the
--- selection — but ONLY when those rows are themselves recognizable box
--- borders (so the new box visually merges into an existing one).  When the
--- adjacent rows are plain text (or only one is a border), returns nil and
--- the caller falls back to inserting fresh border rows.
---
--- Two strategies, tried in order:
---
---   1. Byte-replace: if bytes [start_col, end_col] on both above and below
---      land on valid UTF-8 boundaries, replace those byte ranges with the
---      new border chars.  The suffix past end_col is preserved verbatim, so
---      a wider replacement shifts the existing border's right side further
---      right.
---
---   2. Pad-and-append: if both lines end before the box's left edge, pad
---      with spaces up to that edge and append the border.
---
--- Returns { above, below } when one strategy succeeds, otherwise nil.
----@param above string
----@param below string
----@param content_line string  the first content line (used for the box's display range)
----@param start_col integer    1-indexed byte column on the content line
----@param end_col integer      1-indexed byte column on the content line
----@param preset table         preset for the new borders
----@param presets table        all known presets (used to verify above/below are borders)
----@param prefix? string       comment prefix to strip from above/below before detection
----@param suffix? string       comment suffix (block kind) to strip from above/below
----@return { above: string, below: string }|nil
 -- Byte-replace strategy: only structurally valid when above/below have the
 -- same display layout as the content line up to start_col (e.g. existing
 -- border with space-padding that matches the content line's prefix).
@@ -440,6 +409,25 @@ local function try_append(above, below, box_disp_start, raw_top, raw_bot)
   }
 end
 
+-- Extend the new box's top/bottom borders into the rows above/below the
+-- selection — but ONLY when those rows are themselves recognizable box
+-- borders (so the new box visually merges into an existing one).  When the
+-- adjacent rows are plain text (or only one is a border), returns nil and
+-- the caller falls back to inserting fresh border rows.
+--
+-- Three strategies are tried in order: try_byte_replace, try_splice,
+-- try_append (see each helper above for the precise applicability).
+-- Returns { above, below } when one strategy succeeds, otherwise nil.
+---@param above string
+---@param below string
+---@param content_line string  the first content line (used for the box's display range)
+---@param start_col integer    1-indexed byte column on the content line
+---@param end_col integer      1-indexed byte column on the content line
+---@param preset table         preset for the new borders
+---@param presets table        all known presets (used to verify above/below are borders)
+---@param prefix? string       comment prefix to strip from above/below before detection
+---@param suffix? string       comment suffix (block kind) to strip from above/below
+---@return { above: string, below: string }|nil
 function M.merge_into_borders(
   above,
   below,
@@ -521,6 +509,77 @@ end
 
 -- ===== High-level: Snapshot → Edit[] =====
 
+-- Blockwise wrap helper: when the rows immediately above and below the
+-- selection are both recognizable box borders, extend them in place to merge
+-- the new box into the existing one.  Returns the resulting Edit[] on
+-- success, or nil to signal that the caller should fall through to a plain
+-- wrap (inserting fresh border rows).
+---@param snap Snapshot
+---@param stripped string[]   comment-stripped content rows
+---@param content_start integer
+---@param content_end integer
+---@param preset table
+---@param presets table
+---@param opts table
+---@param cmt_ctx CommentCtx|nil
+---@param prefix string       comment prefix (or "")
+---@return Edit[]|nil
+local function try_merge_into_adjacent_borders(
+  snap,
+  stripped,
+  content_start,
+  content_end,
+  preset,
+  presets,
+  opts,
+  cmt_ctx,
+  prefix
+)
+  if not (snap.above and snap.below) then
+    return nil
+  end
+  local suffix = (cmt_ctx and cmt_ctx.suffix) or ""
+  local merged = M.merge_into_borders(
+    snap.above,
+    snap.below,
+    snap.lines[1],
+    snap.start_col,
+    snap.end_col,
+    preset,
+    presets,
+    prefix,
+    suffix
+  )
+  if not merged then
+    return nil
+  end
+  local wrapped = M.wrap_lines(stripped, content_start, content_end, preset, opts)
+  local content_lines = {}
+  for i = 2, #wrapped - 1 do
+    table.insert(content_lines, wrapped[i])
+  end
+  if cmt_ctx then
+    content_lines = comment.restore(content_lines, cmt_ctx)
+  end
+  return {
+    {
+      row_start = snap.above_row,
+      row_end = snap.above_row + 1,
+      new_lines = { merged.above },
+    },
+    {
+      row_start = snap.row_start,
+      row_end = snap.row_end,
+      new_lines = content_lines,
+    },
+    {
+      row_start = snap.below_row,
+      row_end = snap.below_row + 1,
+      new_lines = { merged.below },
+    },
+  }
+end
+
 -- Wrap a Snapshot's content with a box.  Strips the common comment prefix
 -- (if any), determines the content's display range from the selection mode,
 -- runs the unified `wrap_lines` primitive, and restores the prefix.
@@ -566,50 +625,19 @@ function M.wrap(snap, preset, presets, opts)
       content_end = content_start
     end
 
-    -- Blockwise: when the rows immediately above and below the selection
-    -- are both recognizable box borders, extend them in place to merge the
-    -- new box into the existing one.  Otherwise fall through to plain wrap
-    -- which inserts fresh border rows.
-    if snap.above and snap.below then
-      local suffix = (cmt_ctx and cmt_ctx.suffix) or ""
-      local merged = M.merge_into_borders(
-        snap.above,
-        snap.below,
-        snap.lines[1],
-        snap.start_col,
-        snap.end_col,
-        preset,
-        presets,
-        prefix,
-        suffix
-      )
-      if merged then
-        local wrapped = M.wrap_lines(stripped, content_start, content_end, preset, opts)
-        local content_lines = {}
-        for i = 2, #wrapped - 1 do
-          table.insert(content_lines, wrapped[i])
-        end
-        if cmt_ctx then
-          content_lines = comment.restore(content_lines, cmt_ctx)
-        end
-        return {
-          {
-            row_start = snap.above_row,
-            row_end = snap.above_row + 1,
-            new_lines = { merged.above },
-          },
-          {
-            row_start = snap.row_start,
-            row_end = snap.row_end,
-            new_lines = content_lines,
-          },
-          {
-            row_start = snap.below_row,
-            row_end = snap.below_row + 1,
-            new_lines = { merged.below },
-          },
-        }
-      end
+    local merged_edits = try_merge_into_adjacent_borders(
+      snap,
+      stripped,
+      content_start,
+      content_end,
+      preset,
+      presets,
+      opts,
+      cmt_ctx,
+      prefix
+    )
+    if merged_edits then
+      return merged_edits
     end
   end
 
@@ -628,10 +656,8 @@ end
 -- restored after unwrap so the surviving content keeps its commenting.
 ---@param snap Snapshot
 ---@param presets table
----@param opts? table
 ---@return Edit[]
-function M.unwrap(snap, presets, opts)
-  local _ = opts
+function M.unwrap(snap, presets)
   local stripped, cmt_ctx = comment.strip(snap.lines, snap.filetype)
   local prefix_bytes = (cmt_ctx and #cmt_ctx.prefix) or 0
 

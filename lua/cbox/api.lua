@@ -209,30 +209,29 @@ function M.wrap(sel, bufnr, opts)
   local preset = presets[opts.style or cfg.style]
 
   local boxes = detect.find_boxes(sel, bufnr)
+  local linewise = detect.is_linewise(sel)
 
-  if not detect.is_linewise(sel) and #boxes > 0 then
+  if not linewise and #boxes > 0 then
     merge_overlapping(sel, bufnr, boxes, preset, presets, opts)
     return
   end
+
+  local class = #boxes > 0 and detect.classify(sel, boxes) or { position = P.OUTSIDE }
 
   -- Linewise wrap with existing boxes: erase them all and re-wrap as a
   -- clean linewise box around the cleaned content.  Skip when the selection
   -- is OUTSIDE (touching a single box's border from outside) — that's a
   -- "wrap alongside" case handled by the adjusted-sel path below.
-  if detect.is_linewise(sel) and #boxes > 0 then
-    local class = detect.classify(sel, boxes)
-    if class.position ~= P.OUTSIDE then
-      merge_overlapping_linewise(sel, bufnr, boxes, preset, presets, opts)
-      return
-    end
+  if linewise and #boxes > 0 and class.position ~= P.OUTSIDE then
+    merge_overlapping_linewise(sel, bufnr, boxes, preset, presets, opts)
+    return
   end
 
-  local result = detect.classify(sel, boxes)
   local effective = sel
-  if result.position == P.OUTSIDE and result.adjusted then
+  if class.position == P.OUTSIDE and class.adjusted then
     effective = vim.tbl_extend("force", sel, {
-      start_line = result.adjusted.start_line,
-      end_line = result.adjusted.end_line,
+      start_line = class.adjusted.start_line,
+      end_line = class.adjusted.end_line,
     })
   end
 
@@ -244,10 +243,8 @@ end
 -- where the selection only touches a border row from outside).
 ---@param sel Selection
 ---@param bufnr? integer
----@param opts? BoxOpts|string
-function M.unwrap(sel, bufnr, opts)
+function M.unwrap(sel, bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
-  opts = normalize_opts(opts)
   local presets = require("cbox").config.presets
 
   local boxes = detect.find_boxes(sel, bufnr)
@@ -266,7 +263,7 @@ function M.unwrap(sel, bufnr, opts)
     return
   end
 
-  apply(box.unwrap(snapshot.take(sel, bufnr, boxes[1]), presets, opts), bufnr)
+  apply(box.unwrap(snapshot.take(sel, bufnr, boxes[1]), presets), bufnr)
 end
 
 return M

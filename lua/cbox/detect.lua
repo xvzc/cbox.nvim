@@ -33,20 +33,6 @@ local function all_fill(s, fill)
   return true
 end
 
----@param bufnr integer
----@param from integer 1-indexed
----@param to integer 1-indexed
----@return string[]
-local function buf_lines(bufnr, from, to)
-  local count = vim.api.nvim_buf_line_count(bufnr)
-  from = math.max(1, from)
-  to = math.min(count, to)
-  if from > to then
-    return {}
-  end
-  return vim.api.nvim_buf_get_lines(bufnr, from - 1, to, false)
-end
-
 -- Find the byte position of the character that occupies display column
 -- `target_disp` (1-indexed) on `line`.  Walks char-by-char rather than slicing
 -- prefixes because `strdisplaywidth` on a partial UTF-8 sequence is undefined.
@@ -132,9 +118,9 @@ end
 -- Public entry point for parse_borders_on_line — returns every border pattern
 -- of either kind found anywhere on `line`.  Used by box.lua's
 -- merge_into_borders to check whether an adjacent row contains *any* border
--- pattern, even when multiple boxes are present (where top_preset/bottom_preset
--- on the full stripped line would fail because the "inner" between corners is
--- not all-fill).
+-- pattern, even when multiple boxes are present (where top_preset on the
+-- full stripped line would fail because the "inner" between far corners
+-- contains other corners and is not all-fill).
 ---@param line string
 ---@param presets table
 ---@param is_bottom boolean
@@ -153,23 +139,6 @@ function M.top_preset(line, presets)
     local tl, fill, tr = preset[1], preset[2], preset[3]
     if vim.startswith(line, tl) and vim.endswith(line, tr) then
       local inner = line:sub(#tl + 1, #line - #tr)
-      if all_fill(inner, fill) then
-        return preset
-      end
-    end
-  end
-  return nil
-end
-
--- Detect which preset's bottom border matches `line`.
----@param line string
----@param presets table<string, table>
----@return table|nil
-function M.bottom_preset(line, presets)
-  for _, preset in pairs(presets) do
-    local bl, fill, br = preset[6], preset[7], preset[8]
-    if vim.startswith(line, bl) and vim.endswith(line, br) then
-      local inner = line:sub(#bl + 1, #line - #br)
       if all_fill(inner, fill) then
         return preset
       end
@@ -428,14 +397,6 @@ end
 ---@field boxes Box[]                          -- empty when OUTSIDE
 ---@field adjusted? { start_line: integer, end_line: integer }
 
--- Classify a selection given the boxes it intersects (typically obtained via
--- `find_boxes`).  Single-box semantics: entirely contained → INSIDE; touching
--- only the top or bottom border row from outside → OUTSIDE + adjusted;
--- otherwise → OVERLAPPING.  Multiple boxes → OVERLAPPING with all of them.
--- Empty list → OUTSIDE.
----@param sel Selection
----@param boxes Box[]
----@return DetectResult
 -- True iff the selection's boundaries don't cross the box's boundaries — one
 -- fully contains the other (sel ⊆ box, or box ⊆ sel) in both row and (for
 -- blockwise) column dimensions.  Used by toggle dispatch: when boundaries
@@ -471,6 +432,14 @@ function M.boundaries_align(sel, box, bufnr)
   return sel_cols_in_box or box_cols_in_sel
 end
 
+-- Classify a selection given the boxes it intersects (typically obtained via
+-- `find_boxes`).  Single-box semantics: entirely contained → INSIDE; touching
+-- only the top or bottom border row from outside → OUTSIDE + adjusted;
+-- otherwise → OVERLAPPING.  Multiple boxes → OVERLAPPING with all of them.
+-- Empty list → OUTSIDE.
+---@param sel Selection
+---@param boxes Box[]
+---@return DetectResult
 function M.classify(sel, boxes)
   if #boxes == 0 then
     return { position = M.Position.OUTSIDE, boxes = {} }
