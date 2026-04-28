@@ -26,12 +26,12 @@
 ---@alias cbox.preset string[] 8-element list: tl, top-fill, tr, left, right, bl, bottom-fill, br
 
 ---@class cbox.config
----@field style string                          style name selected from `presets` (default: "thin")
+---@field theme string                          theme name selected from `presets` (default: "thin")
 ---@field presets table<string, cbox.preset>    named border-character sets
 ---@field comment_str table<string, string>     per-filetype comment template, e.g. `{ lua = "-- %s" }`.  Filetypes not present here fall back to `vim.bo[bufnr].commentstring`.
 
 ---@class cbox.opts
----@field style? string  preset name; defaults to `config.style`
+---@field theme? string  border preset name; defaults to `config.theme`
 ---@field width? integer fixed total display width (default: auto)
 ---@field align? string  "left" | "right" | "center" — alignment when `width` is set (default: "left")
 
@@ -45,7 +45,7 @@ local M = {}
 ---@param opts? cbox.config
 ---@usage [[
 ---require("cbox").setup({
----  style = "double",
+---  theme = "double",
 ---  presets = {
 ---    rounded = { "╭", "─", "╮", "│", "│", "╰", "─", "╯" },
 ---  },
@@ -60,11 +60,11 @@ end
 ---@return cbox.opts
 local function resolve_opts(opts)
   if type(opts) == "string" then
-    opts = { style = opts }
+    opts = { theme = opts }
   end
   opts = opts or {}
   return {
-    style = opts.style or M.config.style,
+    theme = opts.theme or M.config.theme,
     width = opts.width,
     align = opts.align or "left",
   }
@@ -75,7 +75,7 @@ end
 ---@param opts? cbox.opts
 ---@usage [[
 ---vim.keymap.set("v", "<leader>cb", function()
----  require("cbox").box({ style = "double" })
+---  require("cbox").box({ theme = "double" })
 ---end)
 ---@usage ]]
 function M.box(opts)

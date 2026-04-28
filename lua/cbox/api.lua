@@ -20,7 +20,7 @@ local P = detect.Position
 ---@return cbox.opts
 local function normalize_opts(opts)
   if type(opts) == "string" then
-    return { style = opts }
+    return { theme = opts }
   end
   return opts or {}
 end
@@ -216,7 +216,7 @@ function M.wrap(sel, bufnr, opts)
   opts = normalize_opts(opts)
   local cfg = require("cbox").config
   local presets = cfg.presets
-  local preset = presets[opts.style or cfg.style]
+  local preset = presets[opts.theme or cfg.theme]
 
   local boxes = detect.find_boxes(sel, bufnr)
   local linewise = detect.is_linewise(sel)

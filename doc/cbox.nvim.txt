@@ -40,7 +40,7 @@ cbox.preset                                                        *cbox.preset*
 cbox.config                                                        *cbox.config*
 
     Fields: ~
-        {style}        (string)                     style name selected from `presets` (default: "thin")
+        {theme}        (string)                     theme name selected from `presets` (default: "thin")
         {presets}      (table<string,cbox.preset>)  named border-character sets
         {comment_str}  (table<string,string>)       per-filetype comment template, e.g. `{ lua = "-- %s" }`.  Filetypes not present here fall back to `vim.bo[bufnr].commentstring`.
 
@@ -48,7 +48,7 @@ cbox.config                                                        *cbox.config*
 cbox.opts                                                            *cbox.opts*
 
     Fields: ~
-        {style?}  (string)   preset name; defaults to `config.style`
+        {theme?}  (string)   border preset name; defaults to `config.theme`
         {width?}  (integer)  fixed total display width (default: auto)
         {align?}  (string)   "left" | "right" | "center" — alignment when `width` is set (default: "left")
 
@@ -64,7 +64,7 @@ M.setup({opts?})                                                    *cbox.setup*
     Usage: ~
 >lua
         require("cbox").setup({
-          style = "double",
+          theme = "double",
           presets = {
             rounded = { "╭", "─", "╮", "│", "│", "╰", "─", "╯" },
           },
@@ -82,7 +82,7 @@ M.box({opts?})                                                        *cbox.box*
     Usage: ~
 >lua
         vim.keymap.set("v", "<leader>cb", function()
-          require("cbox").box({ style = "double" })
+          require("cbox").box({ theme = "double" })
         end)
 <
 

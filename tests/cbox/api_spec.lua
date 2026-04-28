@@ -111,7 +111,7 @@ describe("wrap", function()
     }, get_lines(bufnr))
   end)
 
-  it("uses config.style when no preset_name given", function()
+  it("uses config.theme when no preset_name given", function()
     local bufnr = h.make_buf({ "hello" })
     api.wrap(sel(V, 1, 1), bufnr)
     local lines = get_lines(bufnr)
@@ -224,7 +224,7 @@ describe("wrap", function()
     -- Plain input stays plain after wrap, preserving wrap → unwrap round-trip.
     -- User must explicitly comment the input first if they want a commented box.
     local bufnr = h.make_buf({ "hello" }, "html")
-    api.wrap(sel(V, 1, 1), bufnr, { style = "thin" })
+    api.wrap(sel(V, 1, 1), bufnr, { theme = "thin" })
     assert.are.same({
       "┌───────┐",
       "│ hello │",
@@ -236,7 +236,7 @@ describe("wrap", function()
     "block-only filetype (html): preserves block comment when input is commented",
     function()
       local bufnr = h.make_buf({ "<!-- hello -->" }, "html")
-      api.wrap(sel(V, 1, 1), bufnr, { style = "thin" })
+      api.wrap(sel(V, 1, 1), bufnr, { theme = "thin" })
       assert.are.same({
         "<!-- ┌───────┐ -->",
         "<!-- │ hello │ -->",
@@ -256,7 +256,7 @@ describe("wrap", function()
         "<!-- │ apples │ oranges -->",
         "<!-- └────────┘         -->",
       }, "markdown")
-      api.wrap(sel(BLK, 2, 2, 21, 27), bufnr, { style = "thin" })
+      api.wrap(sel(BLK, 2, 2, 21, 27), bufnr, { theme = "thin" })
       assert.are.same({
         "<!-- ┌────────┐ ┌─────────┐ -->",
         "<!-- │ apples │ │ oranges │ -->",
@@ -277,7 +277,7 @@ describe("wrap", function()
         "<!-- apples │ oranges │ -->",
         "<!--        └─────────┘ -->",
       }, "markdown")
-      api.wrap(sel(BLK, 2, 2, 6, 11), bufnr, { style = "thin" })
+      api.wrap(sel(BLK, 2, 2, 6, 11), bufnr, { theme = "thin" })
       assert.are.same({
         "<!-- ┌────────┐ ┌─────────┐ -->",
         "<!-- │ apples │ │ oranges │ -->",
@@ -291,7 +291,7 @@ describe("wrap", function()
     -- preserved by wrap_lines), border rows must be padded to the same
     -- width so the block-comment closing delim aligns across rows.
     local bufnr = h.make_buf({ "<!-- oranges apple -->" }, "html")
-    api.wrap(sel(BLK, 1, 1, 6, 12), bufnr, { style = "thin" })
+    api.wrap(sel(BLK, 1, 1, 6, 12), bufnr, { theme = "thin" })
     assert.are.same({
       "<!-- ┌─────────┐       -->",
       "<!-- │ oranges │ apple -->",
@@ -816,7 +816,7 @@ describe("toggle", function()
   it("html: V toggle round-trips commented input through wrap → unwrap", function()
     local bufnr = h.make_buf({ "<!-- hello -->" }, "html")
     -- Wrap detects + preserves the existing block comment.
-    api.wrap(sel(V, 1, 1), bufnr, { style = "thin" })
+    api.wrap(sel(V, 1, 1), bufnr, { theme = "thin" })
     assert.are.same({
       "<!-- ┌───────┐ -->",
       "<!-- │ hello │ -->",
@@ -829,7 +829,7 @@ describe("toggle", function()
 
   it("html: V toggle round-trips PLAIN input through wrap → unwrap", function()
     local bufnr = h.make_buf({ "hello" }, "html")
-    api.wrap(sel(V, 1, 1), bufnr, { style = "thin" })
+    api.wrap(sel(V, 1, 1), bufnr, { theme = "thin" })
     assert.are.same({
       "┌───────┐",
       "│ hello │",
