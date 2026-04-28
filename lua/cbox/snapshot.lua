@@ -17,6 +17,7 @@ local M = {}
 ---@field start_col integer  1-indexed byte column
 ---@field end_col integer    1-indexed byte column
 ---@field filetype string
+---@field bufnr integer      source buffer (used by comment.strip for the commentstring fallback)
 ---@field is_linewise boolean
 ---@field above? string      adjacent line above (single-line blockwise wrap only)
 ---@field below? string      adjacent line below
@@ -46,6 +47,7 @@ function M.take(sel, bufnr, box_extent)
     start_col = sel.start_col,
     end_col = sel.end_col,
     filetype = vim.bo[bufnr].filetype,
+    bufnr = bufnr,
     is_linewise = detect.is_linewise(sel),
   }
 

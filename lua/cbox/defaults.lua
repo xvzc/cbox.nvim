@@ -6,34 +6,33 @@ return {
     double = { "╔", "═", "╗", "║", "║", "╚", "═", "╝" },
     ascii = { "+", "-", "+", "|", "|", "+", "-", "+" },
   },
-  -- Per-filetype comment templates, with separate "line" and "block" forms.
-  -- Each template is a string with a "%s" placeholder for the wrapped content.
-  -- Used by the comment module to strip/restore prefixes and to wrap the box
-  -- in block comment delimiters when `opts.block` is set (or when the
-  -- filetype only has a block form, e.g. HTML).
+  -- Per-filetype comment templates: a single string with a "%s" placeholder.
+  -- Block-form (`/* %s */`) is used only for filetypes with no line-comment
+  -- syntax (HTML, CSS, XML, Markdown).  Filetypes not listed here fall back
+  -- to `vim.bo[bufnr].commentstring`.
   comment_str = {
-    c = { line = "// %s", block = "/* %s */" },
-    cpp = { line = "// %s", block = "/* %s */" },
-    go = { line = "// %s", block = "/* %s */" },
-    java = { line = "// %s", block = "/* %s */" },
-    javascript = { line = "// %s", block = "/* %s */" },
-    javascriptreact = { line = "// %s", block = "/* %s */" },
-    typescript = { line = "// %s", block = "/* %s */" },
-    typescriptreact = { line = "// %s", block = "/* %s */" },
-    rust = { line = "// %s", block = "/* %s */" },
-    swift = { line = "// %s", block = "/* %s */" },
-    kotlin = { line = "// %s", block = "/* %s */" },
-    scala = { line = "// %s", block = "/* %s */" },
-    lua = { line = "-- %s", block = "--[[ %s --]]" },
-    css = { block = "/* %s */" },
-    html = { block = "<!-- %s -->" },
-    xml = { block = "<!-- %s -->" },
-    markdown = { block = "<!-- %s -->" },
-    python = { line = "# %s" },
-    ruby = { line = "# %s" },
-    bash = { line = "# %s" },
-    sh = { line = "# %s" },
-    zsh = { line = "# %s" },
-    vim = { line = '" %s' },
+    c = "// %s",
+    cpp = "// %s",
+    go = "// %s",
+    java = "// %s",
+    javascript = "// %s",
+    javascriptreact = "// %s",
+    typescript = "// %s",
+    typescriptreact = "// %s",
+    rust = "// %s",
+    swift = "// %s",
+    kotlin = "// %s",
+    scala = "// %s",
+    lua = "-- %s",
+    css = "/* %s */",
+    html = "<!-- %s -->",
+    xml = "<!-- %s -->",
+    markdown = "<!-- %s -->",
+    python = "# %s",
+    ruby = "# %s",
+    bash = "# %s",
+    sh = "# %s",
+    zsh = "# %s",
+    vim = '" %s',
   },
 }

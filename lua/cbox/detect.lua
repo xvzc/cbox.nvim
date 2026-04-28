@@ -382,7 +382,7 @@ function M.box_is_clean_linewise(box, bufnr)
   local filetype = vim.bo[bufnr].filetype
   for r = box.top + 1, box.bottom - 1 do
     local line = vim.api.nvim_buf_get_lines(bufnr, r - 1, r, false)[1] or ""
-    local stripped_lines, ctx = comment.strip({ line }, filetype)
+    local stripped_lines, ctx = comment.strip({ line }, filetype, bufnr)
     local stripped = stripped_lines[1] or ""
     local prefix_disp = (ctx and vim.fn.strdisplaywidth(ctx.prefix)) or 0
 

@@ -25,14 +25,10 @@
 
 ---@alias cbox.preset string[] 8-element list: tl, top-fill, tr, left, right, bl, bottom-fill, br
 
----@class cbox.comment_template
----@field line? string  per-line comment template, e.g. `"// %s"`
----@field block? string block-comment template, e.g. `"/* %s */"`
-
 ---@class cbox.config
----@field style string                                style name selected from `presets` (default: "thin")
----@field presets table<string, cbox.preset>          named border-character sets
----@field comment_str table<string, cbox.comment_template>  per-filetype comment templates
+---@field style string                          style name selected from `presets` (default: "thin")
+---@field presets table<string, cbox.preset>    named border-character sets
+---@field comment_str table<string, string>     per-filetype comment template, e.g. `{ lua = "-- %s" }`.  Filetypes not present here fall back to `vim.bo[bufnr].commentstring`.
 
 ---@class cbox.opts
 ---@field style? string  preset name; defaults to `config.style`

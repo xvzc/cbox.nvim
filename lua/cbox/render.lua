@@ -151,11 +151,11 @@ end
 -- True when `line` is empty after stripping its comment prefix (if any).  A
 -- former top/bottom border row that only ever held box chars + padding will
 -- look like `"-- "` after the unwrap removes the box; we want to drop it.
-local function is_effectively_blank(line, filetype)
+local function is_effectively_blank(line, filetype, bufnr)
   if line:match("^%s*$") then
     return true
   end
-  local stripped = comment.strip({ line }, filetype or "")[1]
+  local stripped = comment.strip({ line }, filetype or "", bufnr)[1]
   return stripped:match("^%s*$") ~= nil
 end
 
@@ -172,8 +172,9 @@ end
 ---@param top_row_offset integer  1-indexed row index of `lines[1]`
 ---@param boxes cbox.detect.box[]
 ---@param filetype? string
+---@param bufnr? integer       source buffer (for the `commentstring` fallback)
 ---@return cbox.render.unwrap_result
-function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype)
+function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype, bufnr)
   local processed = {}
   local is_content_row = {}
   -- box → { row_offset, byte_start, byte_end } recording each box's first
@@ -285,7 +286,7 @@ function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype)
       content_offset_first = content_offset_first or #final
       row_mapping[i] = #final
       table.insert(final, line)
-    elseif not is_effectively_blank(line, filetype) then
+    elseif not is_effectively_blank(line, filetype, bufnr) then
       row_mapping[i] = #final
       table.insert(final, line)
     end
@@ -294,7 +295,7 @@ function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype)
   -- The wrap should target the content AFTER the comment prefix and any
   -- leading whitespace inside the comment, computed from the first content row.
   local first_content_line = final[(content_offset_first or 0) + 1] or ""
-  local _, cmt_ctx = comment.strip({ first_content_line }, filetype or "")
+  local _, cmt_ctx = comment.strip({ first_content_line }, filetype or "", bufnr)
   local prefix = (cmt_ctx and cmt_ctx.prefix) or ""
   local after_prefix = first_content_line:sub(#prefix + 1)
   local leading_ws = after_prefix:match("^(%s*)") or ""
@@ -597,7 +598,7 @@ function M.wrap(snap, preset, presets, opts)
   -- Only commenting input produces a commented box.  Plain input always
   -- produces a plain box, preserving wrap → unwrap reversibility regardless
   -- of filetype.
-  local stripped, cmt_ctx = comment.strip(snap.lines, snap.filetype)
+  local stripped, cmt_ctx = comment.strip(snap.lines, snap.filetype, snap.bufnr)
   local prefix = (cmt_ctx and cmt_ctx.prefix) or ""
   local prefix_bytes = #prefix
 
@@ -658,7 +659,7 @@ end
 ---@param presets table<string, cbox.preset>
 ---@return cbox.render.edit[]
 function M.unwrap(snap, presets)
-  local stripped, cmt_ctx = comment.strip(snap.lines, snap.filetype)
+  local stripped, cmt_ctx = comment.strip(snap.lines, snap.filetype, snap.bufnr)
   local prefix_bytes = (cmt_ctx and #cmt_ctx.prefix) or 0
 
   -- Detect preset + box display range from the stripped first line (top

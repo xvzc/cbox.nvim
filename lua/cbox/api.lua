@@ -53,7 +53,7 @@ local function erase_overlapping(bufnr, boxes)
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, top - 1, bot, false)
   local filetype = vim.bo[bufnr].filetype
-  local result = box.unwrap_overlapping_blockwise(lines, top, boxes, filetype)
+  local result = box.unwrap_overlapping_blockwise(lines, top, boxes, filetype, bufnr)
 
   vim.api.nvim_buf_set_lines(bufnr, top - 1, bot, false, result.lines)
   return top, bot, result

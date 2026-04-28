@@ -37,19 +37,12 @@ cbox.preset                                                        *cbox.preset*
         string[]
 
 
-cbox.comment_template                                    *cbox.comment_template*
-
-    Fields: ~
-        {line?}   (string)  per-line comment template, e.g. `"// %s"`
-        {block?}  (string)  block-comment template, e.g. `"/* %s */"`
-
-
 cbox.config                                                        *cbox.config*
 
     Fields: ~
-        {style}        (string)                               style name selected from `presets` (default: "thin")
-        {presets}      (table<string,cbox.preset>)            named border-character sets
-        {comment_str}  (table<string,cbox.comment_template>)  per-filetype comment templates
+        {style}        (string)                     style name selected from `presets` (default: "thin")
+        {presets}      (table<string,cbox.preset>)  named border-character sets
+        {comment_str}  (table<string,string>)       per-filetype comment template, e.g. `{ lua = "-- %s" }`.  Filetypes not present here fall back to `vim.bo[bufnr].commentstring`.
 
 
 cbox.opts                                                            *cbox.opts*
@@ -230,7 +223,7 @@ cbox.render.unwrap_result                            *cbox.render.unwrap_result*
 
 
                                       *cbox.render.unwrap_overlapping_blockwise*
-M.unwrap_overlapping_blockwise({lines}, {top_row_offset}, {boxes}, {filetype?})
+M.unwrap_overlapping_blockwise({lines}, {top_row_offset}, {boxes}, {filetype?}, {bufnr?})
     Strips one or more boxes that share top/bottom border rows.  Each box may
     span multiple content rows.
 
@@ -246,6 +239,7 @@ M.unwrap_overlapping_blockwise({lines}, {top_row_offset}, {boxes}, {filetype?})
         {top_row_offset}  (integer)            1-indexed row index of `lines[1]`
         {boxes}           (cbox.detect.box[])
         {filetype?}       (string)
+        {bufnr?}          (integer)            source buffer (for the `commentstring` fallback)
 
     Returns: ~
         (cbox.render.unwrap_result)
@@ -310,9 +304,11 @@ Comment-template resolution and per-line prefix/suffix strip/restore.
 Pure where possible (no Neovim buffer API), but |cbox.comment.resolve_template|
 peeks at `vim.bo[bufnr].commentstring` as a fallback.
 
-Both line- and block-style filetypes are handled the same way: per-line.
-For `"// %s"` each row gets `// ` prepended; for `"<!-- %s -->"` each row
-gets `<!-- ` prepended and ` -->` appended.
+Templates are a single string with a `%s` placeholder.  Whether the
+template is "line"-style or "block"-style is decided by whether there are
+non-whitespace characters after the `%s`: `"// %s"` is line; `"/* %s */"`
+and `"<!-- %s -->"` are block.  Block templates apply prefix and suffix
+per-line; line templates apply prefix only.
 
 cbox.comment.template                                    *cbox.comment.template*
 
@@ -334,7 +330,8 @@ cbox.comment.ctx                                              *cbox.comment.ctx*
 M.resolve_template({filetype}, {bufnr?})         *cbox.comment.resolve_template*
     Resolves the comment template for a filetype.  Looks up
     `cbox.config.comment_str[filetype]` first, falling back to
-    `vim.bo[bufnr].commentstring`.  Returns nil when no template is available.
+    `vim.bo[bufnr].commentstring` when a buffer is given.  Returns nil when
+    neither source provides a template.
 
     Parameters: ~
         {filetype}  (string)
@@ -344,7 +341,7 @@ M.resolve_template({filetype}, {bufnr?})         *cbox.comment.resolve_template*
         (cbox.comment.template|nil)
 
 
-M.strip({lines}, {filetype})                                *cbox.comment.strip*
+M.strip({lines}, {filetype}, {bufnr?})                      *cbox.comment.strip*
     Strips the common comment marker (prefix and, for block kind, suffix) from
     every line.  Returns the stripped lines and a |cbox.comment.ctx|, or the
     original lines and nil when no common comment is found.
@@ -352,6 +349,7 @@ M.strip({lines}, {filetype})                                *cbox.comment.strip*
     Parameters: ~
         {lines}     (string[])
         {filetype}  (string)
+        {bufnr?}    (integer)
 
     Returns: ~
         (string[])              stripped
@@ -589,6 +587,7 @@ cbox.snapshot.t                                                *cbox.snapshot.t*
         {start_col}    (integer)   1-indexed byte column
         {end_col}      (integer)   1-indexed byte column
         {filetype}     (string)
+        {bufnr}        (integer)   source buffer (used by comment.strip for the commentstring fallback)
         {is_linewise}  (boolean)
         {above?}       (string)    adjacent line above (single-line blockwise wrap only)
         {below?}       (string)    adjacent line below

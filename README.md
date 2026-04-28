@@ -43,9 +43,12 @@ require("cbox").setup({
     rounded = { "╭", "─", "╮", "│", "│", "╰", "─", "╯" },
   },
   comment_str = {
-    -- per-filetype comment templates; falls back to `vim.bo.commentstring`
-    lua = { line = "-- %s", block = "--[[ %s --]]" },
-    html = { block = "<!-- %s -->" },
+    -- per-filetype comment template, a single string with a "%s" placeholder.
+    -- Block-form ("/* %s */") is used only for filetypes with no line-comment
+    -- syntax.  Filetypes not listed here fall back to `vim.bo.commentstring`.
+    lua = "-- %s",
+    html = "<!-- %s -->",
+    nix = "# %s",
   },
 })
 ```

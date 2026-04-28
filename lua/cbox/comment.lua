@@ -4,9 +4,11 @@
 ---Pure where possible (no Neovim buffer API), but |cbox.comment.resolve_template|
 ---peeks at `vim.bo[bufnr].commentstring` as a fallback.
 ---
----Both line- and block-style filetypes are handled the same way: per-line.
----For `"// %s"` each row gets `// ` prepended; for `"<!-- %s -->"` each row
----gets `<!-- ` prepended and ` -->` appended.
+---Templates are a single string with a `%s` placeholder.  Whether the
+---template is "line"-style or "block"-style is decided by whether there are
+---non-whitespace characters after the `%s`: `"// %s"` is line; `"/* %s */"`
+---and `"<!-- %s -->"` are block.  Block templates apply prefix and suffix
+---per-line; line templates apply prefix only.
 ---@brief ]]
 
 local M = {}
@@ -33,21 +35,16 @@ end
 
 ---Resolves the comment template for a filetype.  Looks up
 ---`cbox.config.comment_str[filetype]` first, falling back to
----`vim.bo[bufnr].commentstring`.  Returns nil when no template is available.
+---`vim.bo[bufnr].commentstring` when a buffer is given.  Returns nil when
+---neither source provides a template.
 ---@param filetype string
 ---@param bufnr? integer
 ---@return cbox.comment.template|nil
 function M.resolve_template(filetype, bufnr)
   local cbox = require("cbox")
-  local entry = cbox.config.comment_str[filetype]
-  if entry then
-    -- Prefer line; fall back to block (block-only filetypes like HTML).
-    if entry.line then
-      return parse_template(entry.line)
-    end
-    if entry.block then
-      return parse_template(entry.block)
-    end
+  local template = cbox.config.comment_str[filetype]
+  if template then
+    return parse_template(template)
   end
 
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
@@ -64,12 +61,13 @@ end
 -- lines.  Returns ctx or nil.
 ---@param lines string[]
 ---@param filetype string
+---@param bufnr? integer
 ---@return cbox.comment.ctx|nil
-local function detect_prefix(lines, filetype)
+local function detect_prefix(lines, filetype, bufnr)
   if #lines == 0 then
     return nil
   end
-  local resolved = M.resolve_template(filetype, nil)
+  local resolved = M.resolve_template(filetype, bufnr)
   if not resolved then
     return nil
   end
@@ -117,10 +115,11 @@ end
 ---original lines and nil when no common comment is found.
 ---@param lines string[]
 ---@param filetype string
+---@param bufnr? integer
 ---@return string[] stripped
 ---@return cbox.comment.ctx|nil ctx
-function M.strip(lines, filetype)
-  local ctx = detect_prefix(lines, filetype)
+function M.strip(lines, filetype, bufnr)
+  local ctx = detect_prefix(lines, filetype, bufnr)
   if not ctx then
     return lines, nil
   end

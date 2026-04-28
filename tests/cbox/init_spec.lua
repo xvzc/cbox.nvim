@@ -146,11 +146,10 @@ describe("cbox (init)", function()
     end)
 
     it("default comment_str includes common filetypes", function()
-      assert.is_not_nil(cbox.config.comment_str.lua)
-      assert.is_not_nil(cbox.config.comment_str.c)
-      assert.is_not_nil(cbox.config.comment_str.javascript)
-      assert.are.equal("-- %s", cbox.config.comment_str.lua.line)
-      assert.are.equal("--[[ %s --]]", cbox.config.comment_str.lua.block)
+      assert.are.equal("-- %s", cbox.config.comment_str.lua)
+      assert.are.equal("// %s", cbox.config.comment_str.c)
+      assert.are.equal("// %s", cbox.config.comment_str.javascript)
+      assert.are.equal("<!-- %s -->", cbox.config.comment_str.html)
     end)
   end)
 
@@ -186,10 +185,10 @@ describe("cbox (init)", function()
     it("deep-merges a custom comment_str without removing built-in ones", function()
       cbox.setup({
         comment_str = {
-          rust = { line = "/// %s" },
+          rust = "/// %s",
         },
       })
-      assert.are.equal("/// %s", cbox.config.comment_str.rust.line)
+      assert.are.equal("/// %s", cbox.config.comment_str.rust)
       assert.is_not_nil(cbox.config.comment_str.lua)
     end)
 
@@ -413,6 +412,44 @@ describe("cbox (init)", function()
       end)
       local lines = get_lines(bufnr)
       assert.truthy(vim.startswith(lines[1], "  -- ┌"))
+    end)
+
+    it("falls back to vim.bo.commentstring for filetypes not in comment_str", function()
+      -- nix is not in defaults.comment_str; its commentstring is "# %s",
+      -- which the resolve_template fallback should pick up.
+      local bufnr = h.make_buf({ "# box" }, "nix")
+      h.with_visual(bufnr, 1, 1, nil, nil, "V", function()
+        cbox.toggle("thin")
+      end)
+      assert.are.same({
+        "# ┌─────┐",
+        "# │ box │",
+        "# └─────┘",
+      }, get_lines(bufnr))
+    end)
+
+    it("commentstring fallback works for normal-mode (cursor on word)", function()
+      local bufnr = h.make_buf({ "# hello" }, "nix")
+      place_cursor(bufnr, 1, 3) -- on 'h' of "hello"
+      cbox.toggle("thin")
+      assert.are.same({
+        "# ┌───────┐",
+        "# │ hello │",
+        "# └───────┘",
+      }, get_lines(bufnr))
+    end)
+
+    it("explicit comment_str entry overrides commentstring", function()
+      cbox.setup({ comment_str = { nix = "## %s" } })
+      local bufnr = h.make_buf({ "## hello" }, "nix")
+      h.with_visual(bufnr, 1, 1, nil, nil, "V", function()
+        cbox.box("thin")
+      end)
+      assert.are.same({
+        "## ┌───────┐",
+        "## │ hello │",
+        "## └───────┘",
+      }, get_lines(bufnr))
     end)
   end)
 end)
