@@ -61,7 +61,9 @@ cbox.opts                                                            *cbox.opts*
 
 
 M.setup({opts?})                                                    *cbox.setup*
-    Merges `opts` over the defaults.  Safe to call multiple times.
+    Merges `opts` over the defaults.  Safe to call multiple times.  Sets
+    `vim.g.cbox_loaded` so the auto-setup at the bottom of this file becomes
+    a no-op once user setup runs.
 
     Parameters: ~
         {opts?}  (cbox.config)

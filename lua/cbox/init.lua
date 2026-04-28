@@ -43,11 +43,9 @@ local defaults = require("cbox.defaults")
 
 local M = {}
 
----@type cbox.config
----Pre-seeded with defaults so submodules work even without `setup()`.
-M.config = vim.deepcopy(defaults)
-
----Merges `opts` over the defaults.  Safe to call multiple times.
+---Merges `opts` over the defaults.  Safe to call multiple times.  Sets
+---`vim.g.cbox_loaded` so the auto-setup at the bottom of this file becomes
+---a no-op once user setup runs.
 ---@param opts? cbox.config
 ---@usage [[
 ---require("cbox").setup({
@@ -59,6 +57,7 @@ M.config = vim.deepcopy(defaults)
 ---@usage ]]
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", defaults, opts or {})
+  vim.g.cbox_loaded = 1
 end
 
 ---@param opts? cbox.opts|string
@@ -146,6 +145,10 @@ function M.toggle(opts)
   else
     api.wrap(sel, bufnr, resolved)
   end
+end
+
+if not vim.g.cbox_loaded then
+  M.setup()
 end
 
 return M

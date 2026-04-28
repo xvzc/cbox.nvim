@@ -210,6 +210,20 @@ describe("cbox (init)", function()
       cbox.setup()
       assert.are.equal("thin", cbox.config.style)
     end)
+
+    it("sets vim.g.cbox_loaded so the auto-setup at load time skips", function()
+      cbox.setup()
+      assert.are.equal(1, vim.g.cbox_loaded)
+    end)
+
+    it("auto-setup ran on first require: config is populated", function()
+      -- Whatever the test before us did, the auto-setup must have left the
+      -- module with a valid config (otherwise nothing else in this file would
+      -- have worked).  Re-assert the invariant explicitly.
+      assert.is_not_nil(cbox.config)
+      assert.is_not_nil(cbox.config.presets)
+      assert.are.equal(1, vim.g.cbox_loaded)
+    end)
   end)
 
   describe("normal mode selection", function()
