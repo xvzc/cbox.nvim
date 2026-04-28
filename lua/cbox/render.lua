@@ -815,6 +815,42 @@ function M.wrap(snap, preset, presets, opts)
       content_end = content_start
     end
 
+    -- Normalize: shrink [content_start, content_end] to the tight non-
+    -- whitespace span across rows.  Leading/trailing whitespace within
+    -- the selection naturally becomes part of `prefix_bytes` / `suffix`
+    -- in the wrap output, keeping the box drawn around just the actual
+    -- content.  Symmetric with V-line normalization above.
+    local norm_start = math.huge
+    local norm_end = -math.huge
+    for _, line in ipairs(stripped) do
+      local s_byte = detect.byte_at_disp(line, content_start)
+      local e_plus_one_byte = detect.byte_at_disp(line, content_end + 1)
+      if s_byte then
+        local end_byte = e_plus_one_byte and (e_plus_one_byte - 1) or #line
+        if end_byte >= s_byte then
+          local sub = line:sub(s_byte, end_byte)
+          local lead_ws = #(sub:match("^%s*") or "")
+          local trail_ws = #(sub:match("%s*$") or "")
+          if lead_ws + trail_ws < #sub then
+            local first_b = s_byte + lead_ws
+            local last_b_plus_one = end_byte + 1 - trail_ws
+            local first_disp = vim.fn.strdisplaywidth(line:sub(1, first_b - 1)) + 1
+            local last_disp = vim.fn.strdisplaywidth(line:sub(1, last_b_plus_one - 1))
+            if first_disp < norm_start then
+              norm_start = first_disp
+            end
+            if last_disp > norm_end then
+              norm_end = last_disp
+            end
+          end
+        end
+      end
+    end
+    if norm_start ~= math.huge and norm_end >= norm_start then
+      content_start = norm_start
+      content_end = norm_end
+    end
+
     local merged_edits = try_merge_into_adjacent_borders(
       snap,
       stripped,

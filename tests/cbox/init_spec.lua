@@ -558,6 +558,47 @@ describe("cbox (init)", function()
         }, get_lines(bufnr))
       end
     )
+
+    it(
+      "blockwise wrap shrinks the column range to the tight non-whitespace span",
+      function()
+        -- Selection includes a trailing space after `box`.  The wrap should
+        -- normalize to just `box` so the box drawn around the content is
+        -- tight, and the trailing space falls into the post-box suffix.
+        local bufnr = h.make_buf({
+          "  // box box",
+          "  // box box",
+        }, "c")
+        h.with_visual(bufnr, 1, 2, 6, 9, "\22", function()
+          cbox.box({ theme = "thin" })
+        end)
+        assert.are.same({
+          "  // ┌─────┐",
+          "  // │ box │ box",
+          "  // │ box │ box",
+          "  // └─────┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it("blockwise wrap normalizes leading whitespace at the column boundary", function()
+      -- Selection starts at the space before `box`.  The wrap shifts
+      -- content_start past the leading space, so the box wraps `box`
+      -- and the leading space stays as prefix on each row.
+      local bufnr = h.make_buf({
+        "  // box box",
+        "  // box box",
+      }, "c")
+      h.with_visual(bufnr, 1, 2, 5, 8, "\22", function()
+        cbox.box({ theme = "thin" })
+      end)
+      assert.are.same({
+        "  // ┌─────┐",
+        "  // │ box │ box",
+        "  // │ box │ box",
+        "  // └─────┘",
+      }, get_lines(bufnr))
+    end)
   end)
 
   describe("V-line indent and alignment round-trip", function()
