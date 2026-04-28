@@ -196,7 +196,7 @@ M.wrap_lines({lines}, {content_start}, {content_end}, {preset}, {opts?})
 
 
                                                       *cbox.render.unwrap_lines*
-M.unwrap_lines({lines}, {l_disp}, {r_disp}, {preset})
+M.unwrap_lines({lines}, {l_disp}, {r_disp}, {preset}, {linewise?})
     Strips a box from `lines`.  `lines[1]` is the top border, `lines[#lines]`
     is the bottom border, and the middle rows have side chars at display
     columns `l_disp` (left side) and `r_disp` (right side).  Returns the
@@ -204,10 +204,15 @@ M.unwrap_lines({lines}, {l_disp}, {r_disp}, {preset})
     stripped.
 
     Parameters: ~
-        {lines}   (string[])
-        {l_disp}  (integer)      1-indexed display col of the left side char
-        {r_disp}  (integer)      1-indexed display col of the right side char
-        {preset}  (cbox.preset)
+        {lines}      (string[])
+        {l_disp}     (integer)      1-indexed display col of the left side char
+        {r_disp}     (integer)      1-indexed display col of the right side char
+        {preset}     (cbox.preset)
+        {linewise?}  (boolean)      when true, also strip leading whitespace from
+                                                              inner content (recovers `box` from `   box   `
+                                                              in centered/right-aligned linewise wraps).
+                                                              Blockwise calls keep leading whitespace because
+                                                              the caller's column selection determined it.
 
     Returns: ~
         (string[])

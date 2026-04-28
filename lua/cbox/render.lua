@@ -114,8 +114,13 @@ end
 ---@param l_disp integer 1-indexed display col of the left side char
 ---@param r_disp integer 1-indexed display col of the right side char
 ---@param preset cbox.preset
+---@param linewise? boolean  when true, also strip leading whitespace from
+---                          inner content (recovers `box` from `   box   `
+---                          in centered/right-aligned linewise wraps).
+---                          Blockwise calls keep leading whitespace because
+---                          the caller's column selection determined it.
 ---@return string[]
-function M.unwrap_lines(lines, l_disp, r_disp, preset)
+function M.unwrap_lines(lines, l_disp, r_disp, preset, linewise)
   local l, r = preset[4], preset[5]
 
   local stripped = {}
@@ -135,7 +140,11 @@ function M.unwrap_lines(lines, l_disp, r_disp, preset)
       if vim.endswith(inner, " ") then
         inner = inner:sub(1, #inner - 1)
       end
-      inner = inner:match("^(.-)%s*$")
+      if linewise then
+        inner = inner:match("^%s*(.-)%s*$")
+      else
+        inner = inner:match("^(.-)%s*$")
+      end
       table.insert(stripped, prefix_part .. inner .. suffix)
     end
   end
@@ -604,12 +613,37 @@ function M.wrap(snap, preset, presets, opts)
 
   local content_start, content_end
   if snap.is_linewise then
+    -- Hoist the longest common leading whitespace of the (post-comment-strip)
+    -- content lines into the box's indent: a V-line wrap of `["  foo", "  bar"]`
+    -- produces "  ┌────┐ / `  │ foo │` / `  │ bar │` / `  └────┘`, not a box
+    -- starting at col 1 with "  " baked into the content.  The unwrap path
+    -- restores the indent automatically because the chars before the left
+    -- side char are preserved as `prefix_part`.
+    local common = nil
+    for _, line in ipairs(stripped) do
+      if line:match("%S") then
+        local lws = line:match("^(%s*)") or ""
+        if common == nil then
+          common = lws
+        else
+          local n = math.min(#common, #lws)
+          local i = 1
+          while i <= n and common:sub(i, i) == lws:sub(i, i) do
+            i = i + 1
+          end
+          common = common:sub(1, i - 1)
+        end
+      end
+    end
+    common = common or ""
+
     local max_disp = 0
     for _, line in ipairs(stripped) do
       max_disp = math.max(max_disp, vim.fn.strdisplaywidth(line))
     end
-    content_start = 1
-    content_end = max_disp
+    local common_disp = vim.fn.strdisplaywidth(common)
+    content_start = common_disp + 1
+    content_end = math.max(max_disp, content_start)
   else
     if snap.end_col < snap.start_col or snap.end_col - snap.start_col > 10000 then
       return {}
@@ -670,12 +704,18 @@ function M.unwrap(snap, presets)
   local l_disp, r_disp
 
   if snap.is_linewise then
-    preset = detect.top_preset(top_line, presets)
-    if not preset then
+    -- Find the (single) box on the comment-stripped top border row.  The box
+    -- may be indented inside the comment (e.g. "  ┌─────┐") so derive
+    -- l_disp/r_disp from the actual corner positions rather than assuming
+    -- the box fills the line.
+    local borders = detect.find_borders(top_line, presets, false)
+    if #borders == 0 then
       return {}
     end
-    l_disp = 1
-    r_disp = vim.fn.strdisplaywidth(top_line)
+    local tb = borders[1]
+    preset = tb.preset
+    l_disp = vim.fn.strdisplaywidth(top_line:sub(1, tb.left_byte - 1)) + 1
+    r_disp = vim.fn.strdisplaywidth(top_line:sub(1, tb.right_byte + #preset[3] - 1))
   else
     -- Blockwise: selection cols indicate where the corner chars are.
     local sc = snap.start_col - prefix_bytes
@@ -688,7 +728,7 @@ function M.unwrap(snap, presets)
     r_disp = vim.fn.strdisplaywidth(top_line:sub(1, ec))
   end
 
-  local result = M.unwrap_lines(stripped, l_disp, r_disp, preset)
+  local result = M.unwrap_lines(stripped, l_disp, r_disp, preset, snap.is_linewise)
   if cmt_ctx then
     result = comment.restore(result, cmt_ctx)
   end

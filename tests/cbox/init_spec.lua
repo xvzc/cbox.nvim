@@ -452,4 +452,71 @@ describe("cbox (init)", function()
       }, get_lines(bufnr))
     end)
   end)
+
+  describe("V-line indent and alignment round-trip", function()
+    it("hoists common leading whitespace of content into the box indent", function()
+      local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
+      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+        cbox.box("thin")
+      end)
+      assert.are.same({
+        "#   ┌─────┐",
+        "#   │ foo │",
+        "#   │ bar │",
+        "#   └─────┘",
+      }, get_lines(bufnr))
+    end)
+
+    it("differential indent past the common leading is preserved as content", function()
+      local bufnr = h.make_buf({ "#   foo", "#     bar" }, "nix")
+      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+        cbox.box("thin")
+      end)
+      assert.are.same({
+        "#   ┌───────┐",
+        "#   │ foo   │",
+        "#   │   bar │",
+        "#   └───────┘",
+      }, get_lines(bufnr))
+    end)
+
+    it("unwrap recovers the indent from an indented V-line box", function()
+      local bufnr = h.make_buf({
+        "#   ┌─────┐",
+        "#   │ foo │",
+        "#   │ bar │",
+        "#   └─────┘",
+      }, "nix")
+      h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
+        cbox.unbox()
+      end)
+      assert.are.same({ "#   foo", "#   bar" }, get_lines(bufnr))
+    end)
+
+    it("toggle round-trips an indented V-line box back to its source", function()
+      local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
+      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+        cbox.toggle("thin")
+      end)
+      h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
+        cbox.toggle("thin")
+      end)
+      assert.are.same({ "#   foo", "#   bar" }, get_lines(bufnr))
+    end)
+
+    it("unwrap of a wide centered box recovers tight content (loses padding)", function()
+      -- This is the user's reported case: width=80 align=center wraps "# box"
+      -- into a wide centered bold box.  toggle() should give back "# box"
+      -- without the centering padding.
+      local bufnr = h.make_buf({
+        "# ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓",
+        "# ┃                                   box                                   ┃",
+        "# ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛",
+      }, "nix")
+      h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
+        cbox.toggle()
+      end)
+      assert.are.same({ "# box" }, get_lines(bufnr))
+    end)
+  end)
 end)
