@@ -11,6 +11,7 @@
 local detect = require("cbox.detect")
 local snapshot = require("cbox.snapshot")
 local box = require("cbox.render")
+local comment = require("cbox.comment")
 
 local M = {}
 
@@ -53,8 +54,37 @@ local function erase_overlapping(bufnr, boxes)
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, top - 1, bot, false)
   local filetype = vim.bo[bufnr].filetype
-  local result = box.unwrap_overlapping_blockwise(lines, top, boxes, filetype, bufnr)
 
+  -- Spanning input: strip the spanning, erase boxes on the plain content,
+  -- then restore as per-line line markers (always-line unwrap).  Box
+  -- display ranges shift left by the stripped prefix's display width;
+  -- since `<indent_outer><before>` and `<indent_outer><inner_indent>`
+  -- have matching display widths, the shift is uniform across rows.
+  local stripped, cmt_ctx = comment.strip(lines, filetype, bufnr)
+  if cmt_ctx and cmt_ctx.is_spanning then
+    local shift = vim.fn.strdisplaywidth(cmt_ctx.indent_outer .. cmt_ctx.before)
+    local adjusted_boxes = {}
+    for _, b in ipairs(boxes) do
+      table.insert(
+        adjusted_boxes,
+        vim.tbl_extend("force", {}, b, {
+          disp_range = {
+            start = b.disp_range.start - shift,
+            ["end"] = b.disp_range["end"] - shift,
+          },
+        })
+      )
+    end
+    local result =
+      box.unwrap_overlapping_blockwise(stripped, top, adjusted_boxes, filetype, bufnr)
+    local restore_ctx = comment.demote_for_unwrap(cmt_ctx, filetype, bufnr)
+    local restored = restore_ctx and comment.restore(result.lines, restore_ctx)
+      or result.lines
+    vim.api.nvim_buf_set_lines(bufnr, top - 1, bot, false, restored)
+    return top, bot, result
+  end
+
+  local result = box.unwrap_overlapping_blockwise(lines, top, boxes, filetype, bufnr)
   vim.api.nvim_buf_set_lines(bufnr, top - 1, bot, false, result.lines)
   return top, bot, result
 end

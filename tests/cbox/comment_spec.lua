@@ -130,4 +130,133 @@ describe("comment (pure functions)", function()
       assert.are.same({ "-- hello", "-- world" }, actual)
     end)
   end)
+
+  describe("spanning block", function()
+    it("strip detects a single spanning /* */ around a multi-row content", function()
+      local input = {
+        "/* foo",
+        "   bar */",
+      }
+      local lines, ctx = comment.strip(input, "c")
+      assert.are.same({ "foo", "bar" }, lines)
+      assert.is_true(ctx.is_spanning)
+      assert.are.equal("block", ctx.kind)
+      assert.are.equal("", ctx.indent_outer)
+      assert.are.equal("/* ", ctx.before)
+      assert.are.equal(" */", ctx.after)
+    end)
+
+    it("strip detects spanning with outer indent", function()
+      local input = {
+        "  /* ┌─────┐",
+        "     │ box │",
+        "     └─────┘ */",
+      }
+      local lines, ctx = comment.strip(input, "c")
+      assert.are.same(
+        { "┌─────┐", "│ box │", "└─────┘" },
+        lines
+      )
+      assert.is_true(ctx.is_spanning)
+      assert.are.equal("  ", ctx.indent_outer)
+    end)
+
+    it("strip detects HTML spanning <!-- ... -->", function()
+      local input = {
+        "<!-- ┌─────┐",
+        "     │ foo │",
+        "     └─────┘ -->",
+      }
+      local lines, ctx = comment.strip(input, "html")
+      assert.are.same(
+        { "┌─────┐", "│ foo │", "└─────┘" },
+        lines
+      )
+      assert.is_true(ctx.is_spanning)
+    end)
+
+    it(
+      "per-line block-only filetype prefers per-line over spanning when both match",
+      function()
+        -- A 1-row HTML comment matches BOTH per-line (each row has prefix and
+        -- suffix) and spanning (only row, has both delimiters).  detect_perline
+        -- runs first so per-line wins — keeps existing block-only filetype
+        -- behavior.
+        local input = { "<!-- foo -->" }
+        local lines, ctx = comment.strip(input, "html")
+        assert.are.same({ "foo" }, lines)
+        assert.is_nil(ctx.is_spanning)
+      end
+    )
+
+    it("restore re-emits a tight spanning around content rows", function()
+      local input = {
+        "  /* foo bar",
+        "     baz */",
+      }
+      local stripped, ctx = comment.strip(input, "c")
+      assert.are.same({ "foo bar", "baz" }, stripped)
+      local restored = comment.restore(stripped, ctx)
+      assert.are.same({
+        "  /* foo bar",
+        "     baz     */",
+      }, restored)
+    end)
+
+    it("strip → unwrap_lines → restore (spanning) emits tight spanning", function()
+      -- restore with spanning ctx still works — used when callers want to
+      -- preserve spanning form.  Unwrap callers use `demote_for_unwrap`
+      -- before restore to get line output instead.
+      local input = {
+        "  /* ┌─────┐",
+        "     │ box │",
+        "     │ box │",
+        "     └─────┘ */",
+      }
+      local stripped, ctx = comment.strip(input, "c")
+      assert.is_true(ctx.is_spanning)
+      local preset = detect.top_preset(stripped[1], cbox.config.presets)
+      local erased = box.unwrap_lines(stripped, 1, 7, preset)
+      local actual = comment.restore(erased, ctx)
+      assert.are.same({
+        "  /* box",
+        "     box */",
+      }, actual)
+    end)
+
+    it("demote_for_unwrap converts spanning ctx to per-line line ctx", function()
+      local input = {
+        "  /* foo",
+        "     bar */",
+      }
+      local _, ctx = comment.strip(input, "c")
+      assert.is_true(ctx.is_spanning)
+      local demoted = comment.demote_for_unwrap(ctx, "c")
+      assert.are.equal("line", demoted.kind)
+      assert.are.equal("  // ", demoted.prefix)
+      assert.are.equal("", demoted.suffix)
+    end)
+
+    it(
+      "demote_for_unwrap on HTML (no line variant) falls back to block per-row",
+      function()
+        local input = {
+          "<!-- foo",
+          "     bar -->",
+        }
+        local _, ctx = comment.strip(input, "html")
+        assert.is_true(ctx.is_spanning)
+        local demoted = comment.demote_for_unwrap(ctx, "html")
+        assert.are.equal("block", demoted.kind)
+        assert.are.equal("<!-- ", demoted.prefix)
+        assert.are.equal(" -->", demoted.suffix)
+      end
+    )
+
+    it("demote_for_unwrap is a no-op for non-spanning ctx", function()
+      local ctx = { kind = "line", prefix = "// ", restore_prefix = "// ", suffix = "" }
+      local demoted = comment.demote_for_unwrap(ctx, "c")
+      assert.are.same(ctx, demoted)
+    end)
+  end)
 end)

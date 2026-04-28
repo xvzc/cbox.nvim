@@ -40,17 +40,19 @@ cbox.preset                                                        *cbox.preset*
 cbox.config                                                        *cbox.config*
 
     Fields: ~
-        {theme}        (string)                     theme name selected from `presets` (default: "thin")
-        {presets}      (table<string,cbox.preset>)  named border-character sets
-        {comment_str}  (table<string,string>)       per-filetype comment template, e.g. `{ lua = "-- %s" }`.  Filetypes not present here fall back to `vim.bo[bufnr].commentstring`.
+        {theme}        (string)                                             theme name selected from `presets` (default: "thin")
+        {vline_style}  (string)                                             preferred comment kind for V-line wraps: `"line"` | `"block"` (default: `"line"`).  `"block"` emits a single spanning block comment around the whole box; only takes effect when the filetype has a block template configured.
+        {presets}      (table<string,cbox.preset>)                          named border-character sets
+        {comment_str}  (table<string,string|{line?:string,block?:string}>)  per-filetype comment template — either a string (auto-classified) or a `{ line?, block? }` table.  Filetypes not listed fall back to `vim.bo[bufnr].commentstring`.
 
 
 cbox.opts                                                            *cbox.opts*
 
     Fields: ~
-        {theme?}  (string)   border preset name; defaults to `config.theme`
-        {width?}  (integer)  fixed total display width (default: auto)
-        {align?}  (string)   "left" | "right" | "center" — alignment when `width` is set (default: "left")
+        {theme?}        (string)   border preset name; defaults to `config.theme`
+        {vline_style?}  (string)   override `config.vline_style` for this call
+        {width?}        (integer)  fixed total display width (default: auto)
+        {align?}        (string)   "left" | "right" | "center" — alignment when `width` is set (default: "left")
 
 
 M.setup({opts?})                                                    *cbox.setup*
@@ -327,26 +329,34 @@ cbox.comment.template                                    *cbox.comment.template*
         {kind}      (string)  "line" | "block"
         {before}    (string)  chars before `%s` in the template
         {after}     (string)  chars after `%s` in the template
+        {opener?}   (string)  bare opener delimiter for block kind (`/*`, `<!--`, `--[[`)
+        {closer?}   (string)  bare closer delimiter for block kind (`*/`, `-->`, `--]]`)
 
 
 cbox.comment.ctx                                              *cbox.comment.ctx*
 
     Fields: ~
-        {prefix}          (string)  per-line leading prefix (indent + marker + actual space, what's stripped)
-        {restore_prefix}  (string)  canonical leading prefix (indent + template's `before`) used by `restore`; differs from `prefix` when the original line lacked the canonical space (e.g. `#box` → strip "#", restore "# ")
-        {suffix}          (string)  per-line trailing suffix (after, "" for line kind)
-        {kind}            (string)  "line" | "block"
+        {prefix}          (string)   per-line leading prefix (indent + marker + actual space, what's stripped) — used for line and per-line block kinds; for spanning, this is row 1's leading prefix only
+        {restore_prefix}  (string)   canonical leading prefix (indent + template's `before`) used by `restore`; differs from `prefix` when the original line lacked the canonical space (e.g. `#box` → strip "#", restore "# ")
+        {suffix}          (string)   per-line trailing suffix (`after`, "" for line kind); for spanning, this is row N's trailing closer only
+        {kind}            (string)   "line" | "block"
+        {is_spanning?}    (boolean)  true when ctx describes a single SPANNING block comment (row 1 has `before` inline, row N has `after` inline, middle rows space-indented).  When false/nil, block-kind ctx describes per-line block-style wrapping (each row carries `before` and `after`).
+        {indent_outer?}   (string)   spanning only: leading whitespace before `before` on row 1
+        {before?}         (string)   spanning only: template's `before %s` portion (e.g. `"/* "`)
+        {after?}          (string)   spanning only: template's `%s after` portion (e.g. `" */"`)
+        {inner_indent?}   (string)   spanning only: spaces with display width matching `before` — used as row 2..N's lead-in
 
 
-M.resolve_template({filetype}, {bufnr?})         *cbox.comment.resolve_template*
-    Resolves the comment template for a filetype.  Looks up
-    `cbox.config.comment_str[filetype]` first, falling back to
-    `vim.bo[bufnr].commentstring` when a buffer is given.  Returns nil when
-    neither source provides a template.
+                                                 *cbox.comment.resolve_template*
+M.resolve_template({filetype}, {bufnr?}, {style?})
+    Resolves the comment template for a filetype + style.  `style` is one of
+    `"line"` or `"block"`; when the requested variant isn't configured, falls
+    back to the other configured variant, then to `vim.bo[bufnr].commentstring`.
 
     Parameters: ~
         {filetype}  (string)
         {bufnr?}    (integer)
+        {style?}    (string)   "line" | "block"
 
     Returns: ~
         (cbox.comment.template|nil)
@@ -373,18 +383,24 @@ cbox.comment.restore_opts                            *cbox.comment.restore_opts*
         {canonicalize?}  (boolean)  when true (default), use `ctx.restore_prefix` (the canonical "marker + space" from the template) so wraps emit a clean "# ┌...┐" even if the source line was "#box".  Pass `false` to use the actual line prefix verbatim — for trailing/empty wraps that don't consume the line's content, where injecting a canonical space would visually shift the original text.
 
 
-M.restore({lines}, {ctx}, {opts?})                        *cbox.comment.restore*
-    Restores the stored prefix (and suffix for block kind) to every line.
-    For block kind, pads each line up to the max display width before
-    appending the suffix so the closing delimiter aligns across rows.
+                                                *cbox.comment.demote_for_unwrap*
+M.demote_for_unwrap({ctx}, {filetype}, {bufnr?})
+    For unwrap paths.  Returns a per-line ctx that emits the filetype's line
+    marker on every row (or the block per-row marker for filetypes with no
+    line variant).  Spanning ctx is demoted so unwrap always produces line-
+    commented content regardless of input form (line / per-line block /
+    spanning).  Other ctx kinds are returned unchanged.
 
     Parameters: ~
-        {lines}  (string[])
-        {ctx}    (cbox.comment.ctx)
-        {opts?}  (cbox.comment.restore_opts)
+        {ctx}       (cbox.comment.ctx)
+        {filetype}  (string)
+        {bufnr?}    (integer)
 
     Returns: ~
-        (string[])
+        (cbox.comment.ctx|nil)
+
+
+M.restore()                                               *cbox.comment.restore*
 
 
 ==============================================================================

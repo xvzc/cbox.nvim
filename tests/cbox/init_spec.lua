@@ -145,11 +145,17 @@ describe("cbox (init)", function()
       assert.is_not_nil(cbox.config.presets.ascii)
     end)
 
-    it("default comment_str includes common filetypes", function()
-      assert.are.equal("-- %s", cbox.config.comment_str.lua)
-      assert.are.equal("// %s", cbox.config.comment_str.c)
-      assert.are.equal("// %s", cbox.config.comment_str.javascript)
+    it("default comment_str includes common filetypes (line + block variants)", function()
+      assert.are.equal("-- %s", cbox.config.comment_str.lua.line)
+      assert.are.equal("--[[ %s --]]", cbox.config.comment_str.lua.block)
+      assert.are.equal("// %s", cbox.config.comment_str.c.line)
+      assert.are.equal("/* %s */", cbox.config.comment_str.c.block)
+      assert.are.equal("// %s", cbox.config.comment_str.javascript.line)
       assert.are.equal("<!-- %s -->", cbox.config.comment_str.html)
+    end)
+
+    it("default vline_style is 'line'", function()
+      assert.are.equal("line", cbox.config.vline_style)
     end)
   end)
 
@@ -690,5 +696,304 @@ describe("cbox (init)", function()
       end)
       assert.are.same({ "# box" }, get_lines(bufnr))
     end)
+  end)
+
+  describe("V-line wrap with vline_style=block", function()
+    it(
+      "line-commented C input: strips // markers and emits a spanning /* ... */ around the box",
+      function()
+        local bufnr = h.make_buf({
+          "  // box",
+          "  // box",
+          "  // box",
+          "  // box",
+        }, "c")
+        h.with_visual(bufnr, 1, 4, nil, nil, "V", function()
+          cbox.box({ theme = "thin", vline_style = "block" })
+        end)
+        assert.are.same({
+          "  /* ┌─────┐",
+          "     │ box │",
+          "     │ box │",
+          "     │ box │",
+          "     │ box │",
+          "     └─────┘ */",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it("plain content (no comments): wraps with the configured block template", function()
+      local bufnr = h.make_buf({ "foo", "bar" }, "c")
+      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+        cbox.box({ theme = "thin", vline_style = "block" })
+      end)
+      assert.are.same({
+        "/* ┌─────┐",
+        "   │ foo │",
+        "   │ bar │",
+        "   └─────┘ */",
+      }, get_lines(bufnr))
+    end)
+
+    it(
+      "lua line-commented input: emits a spanning --[[ ... --]] around the box",
+      function()
+        local bufnr = h.make_buf({ "-- foo", "-- bar" }, "lua")
+        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+          cbox.box({ theme = "thin", vline_style = "block" })
+        end)
+        assert.are.same({
+          "--[[ ┌─────┐",
+          "     │ foo │",
+          "     │ bar │",
+          "     └─────┘ --]]",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "default vline_style='line' preserves per-row line comments (no opt-in)",
+      function()
+        local bufnr = h.make_buf({ "  // box", "  // box" }, "c")
+        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+          cbox.box({ theme = "thin" })
+        end)
+        assert.are.same({
+          "  // ┌─────┐",
+          "  // │ box │",
+          "  // │ box │",
+          "  // └─────┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it("filetype with no block template falls back to per-row line wrap", function()
+      -- python only has a line variant; vline_style=block has nothing to
+      -- emit, so the wrap path falls through to the regular per-row wrap.
+      local bufnr = h.make_buf({ "# foo", "# bar" }, "python")
+      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+        cbox.box({ theme = "thin", vline_style = "block" })
+      end)
+      assert.are.same({
+        "# ┌─────┐",
+        "# │ foo │",
+        "# │ bar │",
+        "# └─────┘",
+      }, get_lines(bufnr))
+    end)
+
+    it(
+      "non-V-line selection ignores vline_style=block (config opt is V-line only)",
+      function()
+        local bufnr = h.make_buf({ "foo bar baz" }, "c")
+        -- blockwise selection on `bar`
+        h.with_visual(bufnr, 1, 1, 5, 7, "\22", function()
+          cbox.box({ theme = "thin", vline_style = "block" })
+        end)
+        assert.are.same({
+          "    ┌─────┐",
+          "foo │ bar │ baz",
+          "    └─────┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it("toggle on plain V-line input wraps with vline_style=block", function()
+      local bufnr = h.make_buf({ "foo" }, "c")
+      h.with_visual(bufnr, 1, 1, nil, nil, "V", function()
+        cbox.toggle({ theme = "thin", vline_style = "block" })
+      end)
+      assert.are.same({
+        "/* ┌─────┐",
+        "   │ foo │",
+        "   └─────┘ */",
+      }, get_lines(bufnr))
+    end)
+
+    it(
+      "HTML (block-only) with vline_style=block emits a single spanning comment",
+      function()
+        local bufnr = h.make_buf({ "<!-- foo -->", "<!-- bar -->" }, "html")
+        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+          cbox.box({ theme = "thin", vline_style = "block" })
+        end)
+        assert.are.same({
+          "<!-- ┌─────┐",
+          "     │ foo │",
+          "     │ bar │",
+          "     └─────┘ -->",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it("V-line unbox on a spanning-wrapped box demotes spanning to line", function()
+      -- Always-line unwrap rule: regardless of input form (line / per-line
+      -- block / spanning), unwrap converts to the filetype's line variant.
+      local bufnr = h.make_buf({
+        "  /* ┌─────┐",
+        "     │ box │",
+        "     │ box │",
+        "     │ box │",
+        "     └─────┘ */",
+      }, "c")
+      h.with_visual(bufnr, 2, 4, nil, nil, "V", function()
+        cbox.unbox()
+      end)
+      assert.are.same({
+        "  // box",
+        "  // box",
+        "  // box",
+      }, get_lines(bufnr))
+    end)
+
+    it("vline_style=block wrap → unbox round-trips line input losslessly", function()
+      local bufnr = h.make_buf({
+        "  // box",
+        "  // box",
+        "  // box",
+      }, "c")
+      h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
+        cbox.box({ theme = "thin", vline_style = "block" })
+      end)
+      h.with_visual(bufnr, 2, 4, nil, nil, "V", function()
+        cbox.unbox()
+      end)
+      assert.are.same({
+        "  // box",
+        "  // box",
+        "  // box",
+      }, get_lines(bufnr))
+    end)
+
+    it(
+      "normal-mode toggle inside a spanning-wrapped box demotes to line (user's reported case)",
+      function()
+        local bufnr = h.make_buf({
+          "  /* ┌─────────┐",
+          "     │ box box │",
+          "     │ box box │",
+          "     └─────────┘ */",
+        }, "c")
+        vim.api.nvim_set_current_buf(bufnr)
+        vim.api.nvim_win_set_cursor(0, { 2, 8 })
+        cbox.toggle()
+        assert.are.same({
+          "  // box box",
+          "  // box box",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "V-line block wrap dissolves existing boxes that fully sit inside the selection",
+      function()
+        -- Selection covers two complete box pairs (top/content/bottom × 2).
+        -- The wrap should dissolve all four boxes, extract the content rows,
+        -- and re-wrap them in a single spanning block.
+        local bufnr = h.make_buf({
+          "// box box",
+          "// ┌─────┐ ┌─────┐",
+          "// │ box │ │ box │",
+          "// └─────┘ └─────┘",
+          "// ┌─────┐ ┌─────┐",
+          "// │ box │ │ box │",
+          "// └─────┘ └─────┘",
+          "// box box",
+        }, "c")
+        h.with_visual(bufnr, 2, 7, nil, nil, "V", function()
+          cbox.toggle({ theme = "thin", vline_style = "block" })
+        end)
+        assert.are.same({
+          "// box box",
+          "/* ┌─────────┐",
+          "   │ box box │",
+          "   │ box box │",
+          "   └─────────┘ */",
+          "// box box",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "V-line block wrap with selection straddling box boundaries dissolves the union",
+      function()
+        -- Selection covers rows 3-6 (content row 1, bottom 1, top 2, content
+        -- row 2).  Both box pairs overlap the selection, so the wrap dissolves
+        -- both and re-wraps the cleaned content.
+        local bufnr = h.make_buf({
+          "// box box",
+          "// ┌─────┐ ┌─────┐",
+          "// │ box │ │ box │",
+          "// └─────┘ └─────┘",
+          "// ┌─────┐ ┌─────┐",
+          "// │ box │ │ box │",
+          "// └─────┘ └─────┘",
+          "// box box",
+        }, "c")
+        h.with_visual(bufnr, 3, 6, nil, nil, "V", function()
+          cbox.toggle({ theme = "thin", vline_style = "block" })
+        end)
+        assert.are.same({
+          "// box box",
+          "/* ┌─────────┐",
+          "   │ box box │",
+          "   │ box box │",
+          "   └─────────┘ */",
+          "// box box",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "V-line block wrap with selection on a single content row dissolves only the enclosing box",
+      function()
+        -- Selection on row 3 (content row of box pair 1).  Only box pair 1
+        -- overlaps; box pair 2 (rows 5-7) is left untouched.
+        local bufnr = h.make_buf({
+          "// box box",
+          "// ┌─────┐ ┌─────┐",
+          "// │ box │ │ box │",
+          "// └─────┘ └─────┘",
+          "// ┌─────┐ ┌─────┐",
+          "// │ box │ │ box │",
+          "// └─────┘ └─────┘",
+          "// box box",
+        }, "c")
+        h.with_visual(bufnr, 3, 3, nil, nil, "V", function()
+          cbox.toggle({ theme = "thin", vline_style = "block" })
+        end)
+        assert.are.same({
+          "// box box",
+          "/* ┌─────────┐",
+          "   │ box box │",
+          "   └─────────┘ */",
+          "// ┌─────┐ ┌─────┐",
+          "// │ box │ │ box │",
+          "// └─────┘ └─────┘",
+          "// box box",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "HTML (block-only) spanning-wrapped box: unbox falls back to per-row block",
+      function()
+        local bufnr = h.make_buf({
+          "<!-- ┌─────┐",
+          "     │ foo │",
+          "     │ bar │",
+          "     └─────┘ -->",
+        }, "html")
+        h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
+          cbox.unbox()
+        end)
+        -- HTML has no line variant, so demote_for_unwrap falls back to block
+        -- per-row.
+        assert.are.same({
+          "<!-- foo -->",
+          "<!-- bar -->",
+        }, get_lines(bufnr))
+      end
+    )
   end)
 end)

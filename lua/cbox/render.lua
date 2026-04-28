@@ -868,7 +868,10 @@ function M.unwrap(snap, presets)
 
   local result = M.unwrap_lines(stripped, l_disp, r_disp, preset)
   if cmt_ctx then
-    result = comment.restore(result, cmt_ctx)
+    cmt_ctx = comment.demote_for_unwrap(cmt_ctx, snap.filetype, snap.bufnr)
+    if cmt_ctx then
+      result = comment.restore(result, cmt_ctx)
+    end
   end
   return {
     { row_start = snap.row_start, row_end = snap.row_end, new_lines = result },
