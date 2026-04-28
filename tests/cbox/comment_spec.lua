@@ -2,7 +2,7 @@
 -- Tests use plain tables — no bufnr, no make_buf, no after_each cleanup needed.
 
 local comment = require("cbox.comment")
-local box = require("cbox.box")
+local box = require("cbox.render")
 local detect = require("cbox.detect")
 local cbox = require("cbox")
 

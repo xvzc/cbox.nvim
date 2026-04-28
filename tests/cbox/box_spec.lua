@@ -1,7 +1,7 @@
 -- box.lua is a pure module: no Neovim buffer API, only string[] → string[].
 -- Tests use plain tables — no bufnr, no make_buf, no after_each cleanup needed.
 
-local box = require("cbox.box")
+local box = require("cbox.render")
 local cbox = require("cbox")
 
 local thin = { "┌", "─", "┐", "│", "│", "└", "─", "┘" }

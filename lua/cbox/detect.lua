@@ -1,9 +1,21 @@
+---@mod cbox.detect Detect
+---@brief [[
+---Box discovery, geometry, and selection capture.
+---
+---Given a Neovim selection, |cbox.detect.find_boxes| locates every existing
+---box that intersects the selection, |cbox.detect.classify| labels how the
+---selection sits relative to those boxes (INSIDE / OVERLAPPING / OUTSIDE),
+---and |cbox.detect.boundaries_align| answers the toggle dispatcher's
+---"strip vs. merge" question.  |cbox.detect.get_selection| also captures the
+---current selection (visual or cursor-mode word span).
+---@brief ]]
+
 local cbox = require("cbox")
 local comment = require("cbox.comment")
 
 local M = {}
 
----@alias Position "inside"|"overlapping"|"outside"
+---@alias cbox.detect.position string `"inside"` | `"overlapping"` | `"outside"`
 M.Position = {
   INSIDE = "inside",
   OVERLAPPING = "overlapping",
@@ -33,9 +45,10 @@ local function all_fill(s, fill)
   return true
 end
 
--- Find the byte position of the character that occupies display column
--- `target_disp` (1-indexed) on `line`.  Walks char-by-char rather than slicing
--- prefixes because `strdisplaywidth` on a partial UTF-8 sequence is undefined.
+---Finds the byte position of the character that occupies display column
+---`target_disp` (1-indexed) on `line`.  Walks char-by-char rather than
+---slicing prefixes because `strdisplaywidth` on a partial UTF-8 sequence is
+---undefined.
 ---@param line string
 ---@param target_disp integer
 ---@return integer|nil
@@ -115,25 +128,25 @@ end
 
 -- ===== Public border-preset primitives =====
 
--- Public entry point for parse_borders_on_line — returns every border pattern
--- of either kind found anywhere on `line`.  Used by box.lua's
--- merge_into_borders to check whether an adjacent row contains *any* border
--- pattern, even when multiple boxes are present (where top_preset on the
--- full stripped line would fail because the "inner" between far corners
--- contains other corners and is not all-fill).
+---Returns every `lc ... rc` border pattern of either kind on `line`.  Used
+---by |cbox.render.merge_into_borders| to check whether an adjacent row
+---contains at least one border pattern, even when multiple boxes are
+---present (where |cbox.detect.top_preset| on the full stripped line would
+---fail because the "inner" between far corners contains other corners and
+---is not all-fill).
 ---@param line string
----@param presets table
+---@param presets table<string, cbox.preset>
 ---@param is_bottom boolean
 ---@return table[]
 function M.find_borders(line, presets, is_bottom)
   return parse_borders_on_line(line, presets, is_bottom)
 end
 
--- Detect which preset's top border matches `line`.  Returns the preset table
--- or nil.
+---Detects which preset's top border matches `line`.  Returns the preset
+---table or nil.
 ---@param line string
----@param presets table<string, table>
----@return table|nil
+---@param presets table<string, cbox.preset>
+---@return cbox.preset|nil
 function M.top_preset(line, presets)
   for _, preset in pairs(presets) do
     local tl, fill, tr = preset[1], preset[2], preset[3]
@@ -147,12 +160,12 @@ function M.top_preset(line, presets)
   return nil
 end
 
--- Detect which preset matches a blockwise border at specific byte columns.
+---Detects which preset matches a blockwise border at specific byte columns.
 ---@param line string
 ---@param start_col integer 1-indexed byte column of the left corner char
 ---@param end_col integer   1-indexed byte column of the right corner char
----@param presets table<string, table>
----@return table|nil
+---@param presets table<string, cbox.preset>
+---@return cbox.preset|nil
 function M.blockwise_preset(line, start_col, end_col, presets)
   for _, preset in pairs(presets) do
     local tl, fill, tr = preset[1], preset[2], preset[3]
@@ -171,14 +184,16 @@ end
 
 -- ===== Selection helpers =====
 
----@class Selection
+---@class cbox.detect.selection
 ---@field mode string "V"|"v"|"<C-v>"
 ---@field start_line integer 1-indexed
 ---@field end_line integer 1-indexed
 ---@field start_col integer 1-indexed byte column
 ---@field end_col integer 1-indexed byte column
 
----@param sel Selection
+---True iff `sel` represents a linewise selection (V mode, or v mode that
+---spans multiple rows).
+---@param sel cbox.detect.selection
 ---@return boolean
 function M.is_linewise(sel)
   return sel.mode == "V" or (sel.mode == "v" and sel.start_line ~= sel.end_line)
@@ -188,14 +203,18 @@ local is_linewise = M.is_linewise
 
 -- ===== Box construction =====
 
----@class Box
----@field top integer        1-indexed top border row
----@field bottom integer     1-indexed bottom border row
----@field preset table
----@field top_range { left_byte: integer, right_byte: integer }     byte cols on top row
----@field bottom_range { left_byte: integer, right_byte: integer }  byte cols on bottom row
----@field side_range { left_byte: integer, right_byte: integer }    byte cols on the (single) content row
----@field disp_range { start: integer, end: integer }               display col range of the box (l..r inclusive)
+---@class cbox.detect.byte_range
+---@field left_byte integer
+---@field right_byte integer
+
+---@class cbox.detect.box
+---@field top integer                                  1-indexed top border row
+---@field bottom integer                               1-indexed bottom border row
+---@field preset cbox.preset
+---@field top_range cbox.detect.byte_range             byte cols on top row
+---@field bottom_range cbox.detect.byte_range          byte cols on bottom row
+---@field side_range cbox.detect.byte_range            byte cols on the (single) content row
+---@field disp_range { start: integer, end: integer }  display col range of the box (l..r inclusive)
 
 -- Build a full Box descriptor given a parsed top border.  Walks downward
 -- looking for the matching bottom border, validating each intermediate row as
@@ -211,7 +230,7 @@ local is_linewise = M.is_linewise
 ---@param top_line string
 ---@param read_line fun(row: integer): string
 ---@param count integer
----@return Box|nil
+---@return cbox.detect.box|nil
 local function build_box(top_row, tb_info, top_line, read_line, count)
   local preset = tb_info.preset
 
@@ -286,15 +305,13 @@ end
 -- rows) need a larger window; the limit caps work in pathological cases.
 local SCAN_BACK = 50
 
--- Find every box whose row range AND column range intersect the selection's
--- bounding rectangle.  For linewise selections, the column dimension is
--- treated as unbounded (any box on a touched row is included).  For blockwise
--- selections, both dimensions must overlap.
---
--- Limited to single-content-row boxes (3-row total).
----@param sel Selection
+---Finds every box whose row range AND column range intersect the
+---selection's bounding rectangle.  For linewise selections, the column
+---dimension is treated as unbounded (any box on a touched row is included).
+---For blockwise selections, both dimensions must overlap.
+---@param sel cbox.detect.selection
 ---@param bufnr? integer
----@return Box[]
+---@return cbox.detect.box[]
 function M.find_boxes(sel, bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local presets = cbox.config.presets
@@ -353,12 +370,12 @@ function M.find_boxes(sel, bufnr)
   return boxes
 end
 
--- True iff `box` cleanly wraps the linewise content of its content rows —
--- i.e. on every content row, the only non-whitespace chars (after the comment
--- prefix is stripped) lie inside the box's display range.  Used by the V-mode
--- toggle dispatcher to decide between "unwrap this clean box" and "erase the
--- partial box and re-wrap as a proper linewise box".
----@param box Box
+---True iff `box` cleanly wraps the linewise content of its content rows —
+---i.e. on every content row, the only non-whitespace chars (after the
+---comment prefix is stripped) lie inside the box's display range.  Used by
+---the V-mode toggle dispatcher to decide between "unwrap this clean box"
+---and "erase the partial box and re-wrap as a proper linewise box".
+---@param box cbox.detect.box
 ---@param bufnr integer
 ---@return boolean
 function M.box_is_clean_linewise(box, bufnr)
@@ -392,18 +409,22 @@ end
 
 -- ===== Classification =====
 
----@class DetectResult
----@field position Position
----@field boxes Box[]                          -- empty when OUTSIDE
----@field adjusted? { start_line: integer, end_line: integer }
+---@class cbox.detect.adjusted_range
+---@field start_line integer
+---@field end_line integer
 
--- True iff the selection's boundaries don't cross the box's boundaries — one
--- fully contains the other (sel ⊆ box, or box ⊆ sel) in both row and (for
--- blockwise) column dimensions.  Used by toggle dispatch: when boundaries
--- align, the user's intent is "remove this box"; when they cross (partial
--- overlap), it's "merge the box into a wider wrap".
----@param sel Selection
----@param box Box
+---@class cbox.detect.result
+---@field position cbox.detect.position
+---@field boxes cbox.detect.box[]                empty when OUTSIDE
+---@field adjusted? cbox.detect.adjusted_range
+
+---True iff the selection's boundaries don't cross the box's boundaries —
+---one fully contains the other (sel ⊆ box, or box ⊆ sel) in both row and
+---(for blockwise) column dimensions.  Used by toggle dispatch: when
+---boundaries align, the user's intent is "remove this box"; when they
+---cross (partial overlap), it's "merge the box into a wider wrap".
+---@param sel cbox.detect.selection
+---@param box cbox.detect.box
 ---@param bufnr integer
 ---@return boolean
 function M.boundaries_align(sel, box, bufnr)
@@ -432,14 +453,14 @@ function M.boundaries_align(sel, box, bufnr)
   return sel_cols_in_box or box_cols_in_sel
 end
 
--- Classify a selection given the boxes it intersects (typically obtained via
--- `find_boxes`).  Single-box semantics: entirely contained → INSIDE; touching
--- only the top or bottom border row from outside → OUTSIDE + adjusted;
--- otherwise → OVERLAPPING.  Multiple boxes → OVERLAPPING with all of them.
--- Empty list → OUTSIDE.
----@param sel Selection
----@param boxes Box[]
----@return DetectResult
+---Classifies a selection given the boxes it intersects (typically obtained
+---via |cbox.detect.find_boxes|).  Single-box semantics: entirely contained
+---→ INSIDE; touching only the top or bottom border row from outside →
+---OUTSIDE + adjusted; otherwise → OVERLAPPING.  Multiple boxes →
+---OVERLAPPING with all of them.  Empty list → OUTSIDE.
+---@param sel cbox.detect.selection
+---@param boxes cbox.detect.box[]
+---@return cbox.detect.result
 function M.classify(sel, boxes)
   if #boxes == 0 then
     return { position = M.Position.OUTSIDE, boxes = {} }
@@ -553,7 +574,7 @@ local function is_word_boundary(c, box_set)
 end
 
 -- Build a blockwise single-column or word-span selection from cursor in normal mode.
----@return Selection
+---@return cbox.detect.selection
 local function normal_mode_selection()
   local Cv = vim.keycode("<C-v>")
   local cursor = vim.api.nvim_win_get_cursor(0)
@@ -620,6 +641,10 @@ local function normal_mode_selection()
   }
 end
 
+---Captures the current selection as a |cbox.detect.selection| value.
+---Reads from visual mode if active; otherwise builds a single-row blockwise
+---selection covering the word under the cursor.
+---@return cbox.detect.selection
 function M.get_selection()
   -- vim.fn.mode() returns the *current* mode (accurate when called from a
   -- visual-mode mapping whose Lua function runs before Neovim exits visual).

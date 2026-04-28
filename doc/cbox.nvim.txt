@@ -1,0 +1,615 @@
+==============================================================================
+Table of Contents                                                *cbox.contents*
+
+cbox.nvim ······························································· |cbox|
+API ································································· |cbox.api|
+Render ··························································· |cbox.render|
+Comment ························································· |cbox.comment|
+Detect ··························································· |cbox.detect|
+Snapshot ······················································· |cbox.snapshot|
+
+==============================================================================
+cbox.nvim                                                                 *cbox*
+
+Comment-box drawing for Neovim.
+
+Three top-level commands wrap the current visual selection (or the word
+under the cursor in normal mode):
+
+ - |cbox.box|     — draw a box.
+ - |cbox.unbox|   — strip the box around the selection.
+ - |cbox.toggle|  — draw or strip depending on context.
+
+Comment prefixes (per filetype) are detected and preserved, so wrapping a
+selection inside a `// ...` block keeps the new box commented.
+
+Quick start:
+>lua
+  require("cbox").setup()
+  vim.keymap.set({ "n", "v" }, "<leader>cb", function()
+    require("cbox").toggle()
+  end)
+<
+
+cbox.preset                                                        *cbox.preset*
+
+    Type: ~
+        string[]
+
+
+cbox.comment_template                                    *cbox.comment_template*
+
+    Fields: ~
+        {line?}   (string)  per-line comment template, e.g. `"// %s"`
+        {block?}  (string)  block-comment template, e.g. `"/* %s */"`
+
+
+cbox.config                                                        *cbox.config*
+
+    Fields: ~
+        {style}        (string)                               style name selected from `presets` (default: "thin")
+        {presets}      (table<string,cbox.preset>)            named border-character sets
+        {comment_str}  (table<string,cbox.comment_template>)  per-filetype comment templates
+
+
+cbox.opts                                                            *cbox.opts*
+
+    Fields: ~
+        {style?}  (string)   preset name; defaults to `config.style`
+        {width?}  (integer)  fixed total display width (default: auto)
+        {align?}  (string)   "left" | "right" | "center" — alignment when `width` is set (default: "left")
+
+
+M.setup({opts?})                                                    *cbox.setup*
+    Merges `opts` over the defaults.  Safe to call multiple times.
+
+    Parameters: ~
+        {opts?}  (cbox.config)
+
+    Usage: ~
+>lua
+        require("cbox").setup({
+          style = "double",
+          presets = {
+            rounded = { "╭", "─", "╮", "│", "│", "╰", "─", "╯" },
+          },
+        })
+<
+
+
+M.box({opts?})                                                        *cbox.box*
+    Wraps the visual selection (or the word under the cursor in normal mode)
+    in a comment box.
+
+    Parameters: ~
+        {opts?}  (cbox.opts)
+
+    Usage: ~
+>lua
+        vim.keymap.set("v", "<leader>cb", function()
+          require("cbox").box({ style = "double" })
+        end)
+<
+
+
+M.unbox()                                                           *cbox.unbox*
+    Strips the box that contains (or overlaps) the visual selection.  No-op
+    when the selection is not inside any box.
+
+    Usage: ~
+>lua
+        vim.keymap.set({ "n", "v" }, "<leader>cu", function()
+          require("cbox").unbox()
+        end)
+<
+
+
+M.toggle({opts?})                                                  *cbox.toggle*
+    Draws a box if the selection has none, strips it if a box already encloses
+    it, or merges/redraws when the selection partially overlaps existing boxes.
+
+    Parameters: ~
+        {opts?}  (cbox.opts)
+
+    Usage: ~
+>lua
+        vim.keymap.set({ "n", "v" }, "<leader>cc", function()
+          require("cbox").toggle()
+        end)
+<
+
+
+==============================================================================
+API                                                                   *cbox.api*
+
+Buffer-aware orchestration around the pure rendering primitives in
+|cbox.render|.
+
+Each entry point reads the buffer's current state, decides how the
+selection relates to nearby boxes (via |cbox.detect|), and routes to one
+of: a fresh wrap, a merge into existing borders, an erase, or a no-op.
+
+M.wrap({sel}, {bufnr?}, {opts?})                                 *cbox.api.wrap*
+    Draws a box around the selection.  Internally smart:
+     - If the (single-line blockwise) selection touches one or more existing
+       boxes, erase them and re-wrap so the selection is enclosed by a single
+       new box (covers "select inside box", "select wider than box", and
+       "select across multiple adjacent boxes").
+     - If the selection touches a box's border row from outside, trim the
+       border row out of the wrap range.
+     - Otherwise, wrap the selection as-is.
+
+    Parameters: ~
+        {sel}     (cbox.detect.selection)
+        {bufnr?}  (integer)
+        {opts?}   (cbox.opts|string)
+
+
+M.unwrap({sel}, {bufnr?})                                      *cbox.api.unwrap*
+    Removes the box(es) that the selection is inside, contains, or overlaps.
+    No-op when the selection is entirely outside any box (including the case
+    where the selection only touches a border row from outside).
+
+    Parameters: ~
+        {sel}     (cbox.detect.selection)
+        {bufnr?}  (integer)
+
+
+==============================================================================
+Render                                                             *cbox.render*
+
+Pure rendering: turns Snapshots and lower-level inputs into Edit lists or
+transformed string lists.  No Neovim buffer API — all functions operate on
+plain string lists / tables.
+
+Border classification primitives (`top_preset` / `blockwise_preset`) and
+`byte_at_disp` live in |cbox.detect|; this module imports them.
+
+The wrap/unwrap primitives use display columns as their coordinate system,
+the same width-aware coordinate that linewise (full-line) and blockwise
+(column rectangle) ultimately share.  Comment-prefix handling is done by
+the high-level wrap/unwrap (Snapshot → Edit[]) via strip-then-restore, so
+the primitives themselves are prefix-agnostic.
+
+cbox.render.edit                                              *cbox.render.edit*
+
+    Fields: ~
+        {row_start}  (integer)   0-indexed (for nvim_buf_set_lines)
+        {row_end}    (integer)   0-indexed exclusive
+        {new_lines}  (string[])
+
+
+                                                        *cbox.render.wrap_lines*
+M.wrap_lines({lines}, {content_start}, {content_end}, {preset}, {opts?})
+    Wraps each line's content at display columns `[content_start, content_end]`
+    with side chars from `preset`.  Lines whose display width is less than
+    `content_end` are right-padded with spaces so all wrapped rows align.
+    When `opts.width` is set, the box's outer display width is clamped to at
+    least that value (overflow when content is wider — `opts.width` is ignored
+    in that case), and content is aligned within per `opts.align`.
+    Returns `{ top_border, side-wrapped lines..., bottom_border }`.
+
+    Parameters: ~
+        {lines}          (string[])
+        {content_start}  (integer)      1-indexed display col where content begins
+        {content_end}    (integer)      1-indexed display col where content ends (inclusive)
+        {preset}         (cbox.preset)
+        {opts?}          (cbox.opts)
+
+    Returns: ~
+        (string[])
+
+
+                                                      *cbox.render.unwrap_lines*
+M.unwrap_lines({lines}, {l_disp}, {r_disp}, {preset})
+    Strips a box from `lines`.  `lines[1]` is the top border, `lines[#lines]`
+    is the bottom border, and the middle rows have side chars at display
+    columns `l_disp` (left side) and `r_disp` (right side).  Returns the
+    content rows with side chars, padding spaces, and trailing whitespace
+    stripped.
+
+    Parameters: ~
+        {lines}   (string[])
+        {l_disp}  (integer)      1-indexed display col of the left side char
+        {r_disp}  (integer)      1-indexed display col of the right side char
+        {preset}  (cbox.preset)
+
+    Returns: ~
+        (string[])
+
+
+cbox.render.unwrap_result                            *cbox.render.unwrap_result*
+
+    Fields: ~
+        {lines}                     (string[])                             cleaned lines (border-only rows dropped)
+        {content_row_offset_first}  (integer)                              0-indexed offset of the first row that formerly held box content
+        {content_byte_range}        ({start_col:integer,end_col:integer})  trimmed content's byte range on the first content row
+        {row_mapping}               (integer[])                            0-indexed offset of each original row in the cleaned `lines` (nil when dropped)
+
+
+                                      *cbox.render.unwrap_overlapping_blockwise*
+M.unwrap_overlapping_blockwise({lines}, {top_row_offset}, {boxes}, {filetype?})
+    Strips one or more boxes that share top/bottom border rows.  Each box may
+    span multiple content rows.
+
+    Alignment-preserving erase: each box's display range on a row is replaced
+    in place with content (on a content row) or with content-width spaces
+    (on the border rows).  This keeps row widths consistent so other boxes on
+    the same rows stay where they belong.  Border-only rows that become
+    effectively blank (whitespace only, optionally after a comment prefix) are
+    dropped; content rows are always preserved, even if blank after stripping.
+
+    Parameters: ~
+        {lines}           (string[])           lines spanning rows [top_row_offset, top_row_offset+#lines-1]
+        {top_row_offset}  (integer)            1-indexed row index of `lines[1]`
+        {boxes}           (cbox.detect.box[])
+        {filetype?}       (string)
+
+    Returns: ~
+        (cbox.render.unwrap_result)
+
+
+                                                *cbox.render.merge_into_borders*
+M.merge_into_borders({above}, {below}, {content_line}, {start_col}, {end_col}, {preset}, {presets}, {prefix?}, {suffix?})
+
+    Parameters: ~
+        {above}         (string)
+        {below}         (string)
+        {content_line}  (string)   the first content line (used for the box's display range)
+        {start_col}     (integer)  1-indexed byte column on the content line
+        {end_col}       (integer)  1-indexed byte column on the content line
+        {preset}        (table)    preset for the new borders
+        {presets}       (table)    all known presets (used to verify above/below are borders)
+        {prefix?}       (string)   comment prefix to strip from above/below before detection
+        {suffix?}       (string)   comment suffix (block kind) to strip from above/below
+
+    Returns: ~
+        ({above:string,below:string}|nil)
+
+
+                                                              *cbox.render.wrap*
+M.wrap({snap}, {preset}, {presets}, {opts?})
+    Wraps a Snapshot's content with a box.  Strips the common comment prefix
+    (if any), determines the content's display range from the selection mode,
+    runs the unified `wrap_lines` primitive, and restores the prefix.
+
+    For single-line blockwise selections that sit between adjacent border
+    rows (`snap.above` / `snap.below`), tries |cbox.render.merge_into_borders|
+    first to extend the existing box layout.
+
+    Parameters: ~
+        {snap}     (cbox.snapshot.t)
+        {preset}   (cbox.preset)
+        {presets}  (table<string,cbox.preset>)
+        {opts?}    (cbox.opts)
+
+    Returns: ~
+        (cbox.render.edit[])
+
+
+M.unwrap({snap}, {presets})                                 *cbox.render.unwrap*
+    Strips a box from a Snapshot.  Removes any comment form around the box
+    (line prefix or block delim) before stripping the box itself, then
+    restores the marker per line so the surviving content keeps its
+    commenting.
+
+    Parameters: ~
+        {snap}     (cbox.snapshot.t)
+        {presets}  (table<string,cbox.preset>)
+
+    Returns: ~
+        (cbox.render.edit[])
+
+
+==============================================================================
+Comment                                                           *cbox.comment*
+
+Comment-template resolution and per-line prefix/suffix strip/restore.
+Pure where possible (no Neovim buffer API), but |cbox.comment.resolve_template|
+peeks at `vim.bo[bufnr].commentstring` as a fallback.
+
+Both line- and block-style filetypes are handled the same way: per-line.
+For `"// %s"` each row gets `// ` prepended; for `"<!-- %s -->"` each row
+gets `<!-- ` prepended and ` -->` appended.
+
+cbox.comment.template                                    *cbox.comment.template*
+
+    Fields: ~
+        {template}  (string)
+        {kind}      (string)  "line" | "block"
+        {before}    (string)  chars before `%s` in the template
+        {after}     (string)  chars after `%s` in the template
+
+
+cbox.comment.ctx                                              *cbox.comment.ctx*
+
+    Fields: ~
+        {prefix}  (string)  per-line leading prefix (indent + before)
+        {suffix}  (string)  per-line trailing suffix (after, "" for line kind)
+        {kind}    (string)  "line" | "block"
+
+
+M.resolve_template({filetype}, {bufnr?})         *cbox.comment.resolve_template*
+    Resolves the comment template for a filetype.  Looks up
+    `cbox.config.comment_str[filetype]` first, falling back to
+    `vim.bo[bufnr].commentstring`.  Returns nil when no template is available.
+
+    Parameters: ~
+        {filetype}  (string)
+        {bufnr?}    (integer)
+
+    Returns: ~
+        (cbox.comment.template|nil)
+
+
+M.strip({lines}, {filetype})                                *cbox.comment.strip*
+    Strips the common comment marker (prefix and, for block kind, suffix) from
+    every line.  Returns the stripped lines and a |cbox.comment.ctx|, or the
+    original lines and nil when no common comment is found.
+
+    Parameters: ~
+        {lines}     (string[])
+        {filetype}  (string)
+
+    Returns: ~
+        (string[])              stripped
+        (cbox.comment.ctx|nil)  ctx
+
+
+M.restore({lines}, {ctx})                                 *cbox.comment.restore*
+    Restores the stored prefix (and suffix for block kind) to every line.
+    For block kind, pads each line up to the max display width before
+    appending the suffix so the closing delimiter aligns across rows.
+
+    Parameters: ~
+        {lines}  (string[])
+        {ctx}    (cbox.comment.ctx)
+
+    Returns: ~
+        (string[])
+
+
+==============================================================================
+Detect                                                             *cbox.detect*
+
+Box discovery, geometry, and selection capture.
+
+Given a Neovim selection, |cbox.detect.find_boxes| locates every existing
+box that intersects the selection, |cbox.detect.classify| labels how the
+selection sits relative to those boxes (INSIDE / OVERLAPPING / OUTSIDE),
+and |cbox.detect.boundaries_align| answers the toggle dispatcher's
+"strip vs. merge" question.  |cbox.detect.get_selection| also captures the
+current selection (visual or cursor-mode word span).
+
+cbox.detect.position                                      *cbox.detect.position*
+
+    Type: ~
+        string
+
+
+M.byte_at_disp({line}, {target_disp})                 *cbox.detect.byte_at_disp*
+    Finds the byte position of the character that occupies display column
+    `target_disp` (1-indexed) on `line`.  Walks char-by-char rather than
+    slicing prefixes because `strdisplaywidth` on a partial UTF-8 sequence is
+    undefined.
+
+    Parameters: ~
+        {line}         (string)
+        {target_disp}  (integer)
+
+    Returns: ~
+        (integer|nil)
+
+
+                                                      *cbox.detect.find_borders*
+M.find_borders({line}, {presets}, {is_bottom})
+    Returns every `lc ... rc` border pattern of either kind on `line`.  Used
+    by |cbox.render.merge_into_borders| to check whether an adjacent row
+    contains at least one border pattern, even when multiple boxes are
+    present (where |cbox.detect.top_preset| on the full stripped line would
+    fail because the "inner" between far corners contains other corners and
+    is not all-fill).
+
+    Parameters: ~
+        {line}       (string)
+        {presets}    (table<string,cbox.preset>)
+        {is_bottom}  (boolean)
+
+    Returns: ~
+        (table[])
+
+
+M.top_preset({line}, {presets})                         *cbox.detect.top_preset*
+    Detects which preset's top border matches `line`.  Returns the preset
+    table or nil.
+
+    Parameters: ~
+        {line}     (string)
+        {presets}  (table<string,cbox.preset>)
+
+    Returns: ~
+        (cbox.preset|nil)
+
+
+                                                  *cbox.detect.blockwise_preset*
+M.blockwise_preset({line}, {start_col}, {end_col}, {presets})
+    Detects which preset matches a blockwise border at specific byte columns.
+
+    Parameters: ~
+        {line}       (string)
+        {start_col}  (integer)                    1-indexed byte column of the left corner char
+        {end_col}    (integer)                    1-indexed byte column of the right corner char
+        {presets}    (table<string,cbox.preset>)
+
+    Returns: ~
+        (cbox.preset|nil)
+
+
+cbox.detect.selection                                    *cbox.detect.selection*
+
+    Fields: ~
+        {mode}        (string)   "V"|"v"|"<C-v>"
+        {start_line}  (integer)  1-indexed
+        {end_line}    (integer)  1-indexed
+        {start_col}   (integer)  1-indexed byte column
+        {end_col}     (integer)  1-indexed byte column
+
+
+M.is_linewise({sel})                                   *cbox.detect.is_linewise*
+    True iff `sel` represents a linewise selection (V mode, or v mode that
+    spans multiple rows).
+
+    Parameters: ~
+        {sel}  (cbox.detect.selection)
+
+    Returns: ~
+        (boolean)
+
+
+cbox.detect.byte_range                                  *cbox.detect.byte_range*
+
+    Fields: ~
+        {left_byte}   (integer)
+        {right_byte}  (integer)
+
+
+cbox.detect.box                                                *cbox.detect.box*
+
+    Fields: ~
+        {top}           (integer)                      1-indexed top border row
+        {bottom}        (integer)                      1-indexed bottom border row
+        {preset}        (cbox.preset)
+        {top_range}     (cbox.detect.byte_range)       byte cols on top row
+        {bottom_range}  (cbox.detect.byte_range)       byte cols on bottom row
+        {side_range}    (cbox.detect.byte_range)       byte cols on the (single) content row
+        {disp_range}    ({start:integer,end:integer})  display col range of the box (l..r inclusive)
+
+
+M.find_boxes({sel}, {bufnr?})                           *cbox.detect.find_boxes*
+    Finds every box whose row range AND column range intersect the
+    selection's bounding rectangle.  For linewise selections, the column
+    dimension is treated as unbounded (any box on a touched row is included).
+    For blockwise selections, both dimensions must overlap.
+
+    Parameters: ~
+        {sel}     (cbox.detect.selection)
+        {bufnr?}  (integer)
+
+    Returns: ~
+        (cbox.detect.box[])
+
+
+M.box_is_clean_linewise({box}, {bufnr})      *cbox.detect.box_is_clean_linewise*
+    True iff `box` cleanly wraps the linewise content of its content rows —
+    i.e. on every content row, the only non-whitespace chars (after the
+    comment prefix is stripped) lie inside the box's display range.  Used by
+    the V-mode toggle dispatcher to decide between "unwrap this clean box"
+    and "erase the partial box and re-wrap as a proper linewise box".
+
+    Parameters: ~
+        {box}    (cbox.detect.box)
+        {bufnr}  (integer)
+
+    Returns: ~
+        (boolean)
+
+
+cbox.detect.adjusted_range                          *cbox.detect.adjusted_range*
+
+    Fields: ~
+        {start_line}  (integer)
+        {end_line}    (integer)
+
+
+cbox.detect.result                                          *cbox.detect.result*
+
+    Fields: ~
+        {position}   (cbox.detect.position)
+        {boxes}      (cbox.detect.box[])           empty when OUTSIDE
+        {adjusted?}  (cbox.detect.adjusted_range)
+
+
+                                                  *cbox.detect.boundaries_align*
+M.boundaries_align({sel}, {box}, {bufnr})
+    True iff the selection's boundaries don't cross the box's boundaries —
+    one fully contains the other (sel ⊆ box, or box ⊆ sel) in both row and
+    (for blockwise) column dimensions.  Used by toggle dispatch: when
+    boundaries align, the user's intent is "remove this box"; when they
+    cross (partial overlap), it's "merge the box into a wider wrap".
+
+    Parameters: ~
+        {sel}    (cbox.detect.selection)
+        {box}    (cbox.detect.box)
+        {bufnr}  (integer)
+
+    Returns: ~
+        (boolean)
+
+
+M.classify({sel}, {boxes})                                *cbox.detect.classify*
+    Classifies a selection given the boxes it intersects (typically obtained
+    via |cbox.detect.find_boxes|).  Single-box semantics: entirely contained
+    → INSIDE; touching only the top or bottom border row from outside →
+    OUTSIDE + adjusted; otherwise → OVERLAPPING.  Multiple boxes →
+    OVERLAPPING with all of them.  Empty list → OUTSIDE.
+
+    Parameters: ~
+        {sel}    (cbox.detect.selection)
+        {boxes}  (cbox.detect.box[])
+
+    Returns: ~
+        (cbox.detect.result)
+
+
+M.get_selection()                                    *cbox.detect.get_selection*
+    Captures the current selection as a |cbox.detect.selection| value.
+    Reads from visual mode if active; otherwise builds a single-row blockwise
+    selection covering the word under the cursor.
+
+    Returns: ~
+        (cbox.detect.selection)
+
+
+==============================================================================
+Snapshot                                                         *cbox.snapshot*
+
+Builds Snapshot tables from a Selection plus buffer state.  The only impure
+module besides |cbox.api|: it reads from the buffer.  Downstream consumers
+(|cbox.render|) operate on Snapshots without touching the buffer themselves,
+which keeps rendering pure and easy to test.
+
+cbox.snapshot.t                                                *cbox.snapshot.t*
+
+    Fields: ~
+        {lines}        (string[])
+        {row_start}    (integer)   0-indexed (for nvim_buf_set_lines)
+        {row_end}      (integer)   0-indexed exclusive
+        {start_col}    (integer)   1-indexed byte column
+        {end_col}      (integer)   1-indexed byte column
+        {filetype}     (string)
+        {is_linewise}  (boolean)
+        {above?}       (string)    adjacent line above (single-line blockwise wrap only)
+        {below?}       (string)    adjacent line below
+        {above_row?}   (integer)   0-indexed row of `above`
+        {below_row?}   (integer)   0-indexed row of `below`
+
+
+M.take({sel}, {bufnr}, {box_extent?})                       *cbox.snapshot.take*
+    Captures the buffer state needed by |cbox.render.wrap| and |cbox.render.unwrap|.
+
+    Without `box_extent`, the row range comes from the selection (wrap
+    scenario); for blockwise selections, the rows immediately above and below
+    the selection are captured too so `box.wrap` can merge into existing
+    border rows.  With `box_extent`, the row range comes from the box's extent
+    (unwrap scenario).
+
+    Parameters: ~
+        {sel}          (cbox.detect.selection)
+        {bufnr}        (integer)
+        {box_extent?}  (cbox.detect.box)
+
+    Returns: ~
+        (cbox.snapshot.t)
+
+
+vim:tw=78:ts=8:noet:ft=help:norl:

@@ -1,22 +1,25 @@
--- Pure rendering: turns Snapshots and lower-level inputs into Edit[] lists or
--- transformed string lists.  No Neovim buffer API — all functions operate on
--- plain string lists / tables.
---
--- Border classification primitives (top_preset / blockwise_preset) and
--- `byte_at_disp` live in detect.lua; this module imports them.
---
--- The wrap/unwrap primitives use display columns as their coordinate system —
--- the same width-aware coordinate that linewise (full-line) and blockwise
--- (column rectangle) ultimately share.  Comment-prefix handling is done by
--- the high-level wrap/unwrap (Snapshot → Edit[]) via strip-then-restore, so
--- the primitives themselves are prefix-agnostic.
+---@mod cbox.render Render
+---@brief [[
+---Pure rendering: turns Snapshots and lower-level inputs into Edit lists or
+---transformed string lists.  No Neovim buffer API — all functions operate on
+---plain string lists / tables.
+---
+---Border classification primitives (`top_preset` / `blockwise_preset`) and
+---`byte_at_disp` live in |cbox.detect|; this module imports them.
+---
+---The wrap/unwrap primitives use display columns as their coordinate system,
+---the same width-aware coordinate that linewise (full-line) and blockwise
+---(column rectangle) ultimately share.  Comment-prefix handling is done by
+---the high-level wrap/unwrap (Snapshot → Edit[]) via strip-then-restore, so
+---the primitives themselves are prefix-agnostic.
+---@brief ]]
 
 local comment = require("cbox.comment")
 local detect = require("cbox.detect")
 
 local M = {}
 
----@class Edit
+---@class cbox.render.edit
 ---@field row_start integer 0-indexed (for nvim_buf_set_lines)
 ---@field row_end integer   0-indexed exclusive
 ---@field new_lines string[]
@@ -48,18 +51,18 @@ local function pad_content(content, target_w, align)
   return trimmed .. string.rep(" ", slack)
 end
 
--- Wrap each line's content at display columns [content_start, content_end]
--- with side chars from `preset`.  Lines whose display width is less than
--- `content_end` are right-padded with spaces so all wrapped rows align.
--- When `opts.width` is set, the box's outer display width is clamped to at
--- least that value (overflow when content is wider — opts.width is ignored
--- in that case), and content is aligned within per `opts.align`.
--- Returns { top_border, side-wrapped lines..., bottom_border }.
+---Wraps each line's content at display columns `[content_start, content_end]`
+---with side chars from `preset`.  Lines whose display width is less than
+---`content_end` are right-padded with spaces so all wrapped rows align.
+---When `opts.width` is set, the box's outer display width is clamped to at
+---least that value (overflow when content is wider — `opts.width` is ignored
+---in that case), and content is aligned within per `opts.align`.
+---Returns `{ top_border, side-wrapped lines..., bottom_border }`.
 ---@param lines string[]
 ---@param content_start integer 1-indexed display col where content begins
 ---@param content_end integer   1-indexed display col where content ends (inclusive)
----@param preset table
----@param opts? { width?: integer, align?: "left"|"right"|"center" }
+---@param preset cbox.preset
+---@param opts? cbox.opts
 ---@return string[]
 function M.wrap_lines(lines, content_start, content_end, preset, opts)
   local tl, fill, tr = preset[1], preset[2], preset[3]
@@ -102,14 +105,15 @@ function M.wrap_lines(lines, content_start, content_end, preset, opts)
   return result
 end
 
--- Strip a box from `lines`.  lines[1] is the top border, lines[#lines] is the
--- bottom border, and the middle rows have side chars at display columns
--- `l_disp` (left side) and `r_disp` (right side).  Returns the content rows
--- with side chars, padding spaces, and trailing whitespace stripped.
+---Strips a box from `lines`.  `lines[1]` is the top border, `lines[#lines]`
+---is the bottom border, and the middle rows have side chars at display
+---columns `l_disp` (left side) and `r_disp` (right side).  Returns the
+---content rows with side chars, padding spaces, and trailing whitespace
+---stripped.
 ---@param lines string[]
 ---@param l_disp integer 1-indexed display col of the left side char
 ---@param r_disp integer 1-indexed display col of the right side char
----@param preset table
+---@param preset cbox.preset
 ---@return string[]
 function M.unwrap_lines(lines, l_disp, r_disp, preset)
   local l, r = preset[4], preset[5]
@@ -138,15 +142,11 @@ function M.unwrap_lines(lines, l_disp, r_disp, preset)
   return stripped
 end
 
----@class UnwrapOverlappingResult
----@field lines string[]            cleaned lines (border-only rows dropped)
----@field content_row_offset_first integer 0-indexed offset into `lines` of the
----                                  first row that formerly held box content
----@field content_byte_range { start_col: integer, end_col: integer }
----                                  trimmed content's byte range on the first content row
----@field row_mapping integer[]     row_mapping[r_offset] = 0-indexed offset in
----                                  `lines` for original row at top_row_offset+r_offset-1,
----                                  or nil if dropped
+---@class cbox.render.unwrap_result
+---@field lines string[]                                                cleaned lines (border-only rows dropped)
+---@field content_row_offset_first integer                              0-indexed offset of the first row that formerly held box content
+---@field content_byte_range { start_col: integer, end_col: integer }   trimmed content's byte range on the first content row
+---@field row_mapping integer[]                                         0-indexed offset of each original row in the cleaned `lines` (nil when dropped)
 
 -- True when `line` is empty after stripping its comment prefix (if any).  A
 -- former top/bottom border row that only ever held box chars + padding will
@@ -159,20 +159,20 @@ local function is_effectively_blank(line, filetype)
   return stripped:match("^%s*$") ~= nil
 end
 
--- Strip one or more boxes that share top/bottom border rows.  Each box may
--- span multiple content rows.
---
--- Alignment-preserving erase: each box's display range on a row is replaced
--- in place with content (on a content row) or with content-width spaces
--- (on the border rows).  This keeps row widths consistent so other boxes on
--- the same rows stay where they belong.  Border-only rows that become
--- effectively blank (whitespace only, optionally after a comment prefix) are
--- dropped; content rows are always preserved, even if blank after stripping.
+---Strips one or more boxes that share top/bottom border rows.  Each box may
+---span multiple content rows.
+---
+---Alignment-preserving erase: each box's display range on a row is replaced
+---in place with content (on a content row) or with content-width spaces
+---(on the border rows).  This keeps row widths consistent so other boxes on
+---the same rows stay where they belong.  Border-only rows that become
+---effectively blank (whitespace only, optionally after a comment prefix) are
+---dropped; content rows are always preserved, even if blank after stripping.
 ---@param lines string[]      lines spanning rows [top_row_offset, top_row_offset+#lines-1]
 ---@param top_row_offset integer  1-indexed row index of `lines[1]`
----@param boxes Box[]
+---@param boxes cbox.detect.box[]
 ---@param filetype? string
----@return UnwrapOverlappingResult
+---@return cbox.render.unwrap_result
 function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype)
   local processed = {}
   local is_content_row = {}
@@ -514,16 +514,16 @@ end
 -- the new box into the existing one.  Returns the resulting Edit[] on
 -- success, or nil to signal that the caller should fall through to a plain
 -- wrap (inserting fresh border rows).
----@param snap Snapshot
+---@param snap cbox.snapshot.t
 ---@param stripped string[]   comment-stripped content rows
 ---@param content_start integer
 ---@param content_end integer
 ---@param preset table
 ---@param presets table
 ---@param opts table
----@param cmt_ctx CommentCtx|nil
+---@param cmt_ctx cbox.comment.ctx|nil
 ---@param prefix string       comment prefix (or "")
----@return Edit[]|nil
+---@return cbox.render.edit[]|nil
 local function try_merge_into_adjacent_borders(
   snap,
   stripped,
@@ -580,18 +580,18 @@ local function try_merge_into_adjacent_borders(
   }
 end
 
--- Wrap a Snapshot's content with a box.  Strips the common comment prefix
--- (if any), determines the content's display range from the selection mode,
--- runs the unified `wrap_lines` primitive, and restores the prefix.
---
--- For single-line blockwise selections that sit between adjacent border rows
--- (snap.above / snap.below), tries `merge_into_borders` first to extend the
--- existing box layout.
----@param snap Snapshot
----@param preset table
----@param presets table
----@param opts? { width?: integer, align?: "left"|"right"|"center" }
----@return Edit[]
+---Wraps a Snapshot's content with a box.  Strips the common comment prefix
+---(if any), determines the content's display range from the selection mode,
+---runs the unified `wrap_lines` primitive, and restores the prefix.
+---
+---For single-line blockwise selections that sit between adjacent border
+---rows (`snap.above` / `snap.below`), tries |cbox.render.merge_into_borders|
+---first to extend the existing box layout.
+---@param snap cbox.snapshot.t
+---@param preset cbox.preset
+---@param presets table<string, cbox.preset>
+---@param opts? cbox.opts
+---@return cbox.render.edit[]
 function M.wrap(snap, preset, presets, opts)
   opts = opts or {}
   -- Only commenting input produces a commented box.  Plain input always
@@ -650,13 +650,13 @@ function M.wrap(snap, preset, presets, opts)
   }
 end
 
--- Strip a box from a Snapshot.  Strips ANY comment form around the box
--- (line prefix or block delim) before unwrapping the box.  Restores the
--- comment marker per line, then unwrapping the box.  The same marker is
--- restored after unwrap so the surviving content keeps its commenting.
----@param snap Snapshot
----@param presets table
----@return Edit[]
+---Strips a box from a Snapshot.  Removes any comment form around the box
+---(line prefix or block delim) before stripping the box itself, then
+---restores the marker per line so the surviving content keeps its
+---commenting.
+---@param snap cbox.snapshot.t
+---@param presets table<string, cbox.preset>
+---@return cbox.render.edit[]
 function M.unwrap(snap, presets)
   local stripped, cmt_ctx = comment.strip(snap.lines, snap.filetype)
   local prefix_bytes = (cmt_ctx and #cmt_ctx.prefix) or 0

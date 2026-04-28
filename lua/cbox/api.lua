@@ -1,13 +1,23 @@
+---@mod cbox.api API
+---@brief [[
+---Buffer-aware orchestration around the pure rendering primitives in
+---|cbox.render|.
+---
+---Each entry point reads the buffer's current state, decides how the
+---selection relates to nearby boxes (via |cbox.detect|), and routes to one
+---of: a fresh wrap, a merge into existing borders, an erase, or a no-op.
+---@brief ]]
+
 local detect = require("cbox.detect")
 local snapshot = require("cbox.snapshot")
-local box = require("cbox.box")
+local box = require("cbox.render")
 
 local M = {}
 
 local P = detect.Position
 
----@param opts? table|string
----@return table
+---@param opts? cbox.opts|string
+---@return cbox.opts
 local function normalize_opts(opts)
   if type(opts) == "string" then
     return { style = opts }
@@ -15,7 +25,7 @@ local function normalize_opts(opts)
   return opts or {}
 end
 
----@param edits Edit[]
+---@param edits cbox.render.edit[]
 ---@param bufnr integer
 local function apply(edits, bufnr)
   -- Apply highest-row-first so that earlier edits cannot shift the row indices
@@ -32,8 +42,8 @@ end
 -- row's location for downstream re-wrapping.  Boxes are assumed to share rows
 -- (top above selection, content on selection row, bottom below).
 ---@param bufnr integer
----@param boxes Box[]
----@return integer top_row, integer bot_row, UnwrapOverlappingResult result
+---@param boxes cbox.detect.box[]
+---@return integer top_row, integer bot_row, cbox.render.unwrap_result result
 local function erase_overlapping(bufnr, boxes)
   local top, bot = math.huge, 0
   for _, b in ipairs(boxes) do
@@ -53,7 +63,7 @@ end
 -- to a 0-indexed offset into the post-erase `result.lines`.  Falls back via
 -- `search_dir` ("before" walks earlier rows, "after" walks later rows) when
 -- the exact row was dropped, finally defaulting to the first content row.
----@param result UnwrapOverlappingResult
+---@param result cbox.render.unwrap_result
 ---@param target_line integer
 ---@param top integer
 ---@param n_orig integer  number of rows in the original range (bot - top + 1)
@@ -92,9 +102,9 @@ end
 -- coordinates (so a sel touching only one of several content rows wraps just
 -- that row, not the whole stripped box).  Multi-row results re-wrap linewise
 -- so rows of differing widths get padded to the widest.
----@param sel Selection
+---@param sel cbox.detect.selection
 ---@param bufnr integer
----@param boxes Box[]
+---@param boxes cbox.detect.box[]
 ---@param preset table
 ---@param presets table
 ---@param opts? table
@@ -152,9 +162,9 @@ end
 -- overlaps the selection's row range and re-wrap as a single linewise box
 -- around the cleaned content.  Used when V-mode toggle hits "dirty" state
 -- (partial inner boxes, multiple boxes, etc.).
----@param sel Selection
+---@param sel cbox.detect.selection
 ---@param bufnr integer
----@param boxes Box[]
+---@param boxes cbox.detect.box[]
 ---@param preset table
 ---@param presets table
 ---@param opts? table
@@ -190,17 +200,17 @@ local function merge_overlapping_linewise(sel, bufnr, boxes, preset, presets, op
   apply(box.wrap(snapshot.take(new_sel, bufnr), preset, presets, opts), bufnr)
 end
 
--- Draw a box around the selection.  Internally smart:
---   * If the (single-line blockwise) selection touches one or more existing
---     boxes, erase them and re-wrap so the selection is enclosed by a single
---     new box (covers "select inside box", "select wider than box", and
---     "select across multiple adjacent boxes").
---   * If the selection touches a box's border row from outside, trim the
---     border row out of the wrap range.
---   * Otherwise, wrap the selection as-is.
----@param sel Selection
+---Draws a box around the selection.  Internally smart:
+--- - If the (single-line blockwise) selection touches one or more existing
+---   boxes, erase them and re-wrap so the selection is enclosed by a single
+---   new box (covers "select inside box", "select wider than box", and
+---   "select across multiple adjacent boxes").
+--- - If the selection touches a box's border row from outside, trim the
+---   border row out of the wrap range.
+--- - Otherwise, wrap the selection as-is.
+---@param sel cbox.detect.selection
 ---@param bufnr? integer
----@param opts? BoxOpts|string
+---@param opts? cbox.opts|string
 function M.wrap(sel, bufnr, opts)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   opts = normalize_opts(opts)
@@ -238,10 +248,10 @@ function M.wrap(sel, bufnr, opts)
   apply(box.wrap(snapshot.take(effective, bufnr), preset, presets, opts), bufnr)
 end
 
--- Remove the box(es) that the selection is inside, contains, or overlaps.
--- No-op when the selection is entirely outside any box (including the case
--- where the selection only touches a border row from outside).
----@param sel Selection
+---Removes the box(es) that the selection is inside, contains, or overlaps.
+---No-op when the selection is entirely outside any box (including the case
+---where the selection only touches a border row from outside).
+---@param sel cbox.detect.selection
 ---@param bufnr? integer
 function M.unwrap(sel, bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()

@@ -49,3 +49,17 @@ jobs:
 
       - name: Run tests
         run: make test
+
+  check-docs:
+    name: Check Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install lemmy-help
+        run: |
+          curl -sL https://github.com/numToStr/lemmy-help/releases/latest/download/lemmy-help-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz -C /usr/local/bin
+
+      - name: Check docs
+        run: make check-docs

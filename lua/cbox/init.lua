@@ -1,23 +1,68 @@
+---@toc cbox.contents
+
+---@mod cbox cbox.nvim
+---@brief [[
+---Comment-box drawing for Neovim.
+---
+---Three top-level commands wrap the current visual selection (or the word
+---under the cursor in normal mode):
+---
+--- - |cbox.box|     — draw a box.
+--- - |cbox.unbox|   — strip the box around the selection.
+--- - |cbox.toggle|  — draw or strip depending on context.
+---
+---Comment prefixes (per filetype) are detected and preserved, so wrapping a
+---selection inside a `// ...` block keeps the new box commented.
+---
+---Quick start:
+--->lua
+---  require("cbox").setup()
+---  vim.keymap.set({ "n", "v" }, "<leader>cb", function()
+---    require("cbox").toggle()
+---  end)
+---<
+---@brief ]]
+
+---@alias cbox.preset string[] 8-element list: tl, top-fill, tr, left, right, bl, bottom-fill, br
+
+---@class cbox.comment_template
+---@field line? string  per-line comment template, e.g. `"// %s"`
+---@field block? string block-comment template, e.g. `"/* %s */"`
+
+---@class cbox.config
+---@field style string                                style name selected from `presets` (default: "thin")
+---@field presets table<string, cbox.preset>          named border-character sets
+---@field comment_str table<string, cbox.comment_template>  per-filetype comment templates
+
+---@class cbox.opts
+---@field style? string  preset name; defaults to `config.style`
+---@field width? integer fixed total display width (default: auto)
+---@field align? string  "left" | "right" | "center" — alignment when `width` is set (default: "left")
+
 local defaults = require("cbox.defaults")
 
 local M = {}
 
--- Always pre-seeded with defaults so submodules work even without setup().
+---@type cbox.config
+---Pre-seeded with defaults so submodules work even without `setup()`.
 M.config = vim.deepcopy(defaults)
 
--- Merge user opts on top of defaults.  Safe to call multiple times.
----@param opts? table
+---Merges `opts` over the defaults.  Safe to call multiple times.
+---@param opts? cbox.config
+---@usage [[
+---require("cbox").setup({
+---  style = "double",
+---  presets = {
+---    rounded = { "╭", "─", "╮", "│", "│", "╰", "─", "╯" },
+---  },
+---})
+---@usage ]]
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 end
 
----@class BoxOpts
----@field style? string                 preset name; defaults to config.style
----@field width? integer                fixed total display width (default: auto)
----@field align? "left"|"right"|"center" alignment with fixed width (default: "left")
-
----@param opts? BoxOpts|string
----@return BoxOpts
+---@param opts? cbox.opts|string
+---@return cbox.opts
 local function resolve_opts(opts)
   if type(opts) == "string" then
     opts = { style = opts }
@@ -30,22 +75,39 @@ local function resolve_opts(opts)
   }
 end
 
--- Top-level user-facing commands.  They read the visual selection automatically
--- so keymaps can call them with no arguments (other than an optional opts table).
--- Sub-requires are lazy (inside function bodies) to avoid circular loading.
-
----@param opts? BoxOpts
+---Wraps the visual selection (or the word under the cursor in normal mode)
+---in a comment box.
+---@param opts? cbox.opts
+---@usage [[
+---vim.keymap.set("v", "<leader>cb", function()
+---  require("cbox").box({ style = "double" })
+---end)
+---@usage ]]
 function M.box(opts)
   local sel = require("cbox.detect").get_selection()
   require("cbox.api").wrap(sel, vim.api.nvim_get_current_buf(), resolve_opts(opts))
 end
 
+---Strips the box that contains (or overlaps) the visual selection.  No-op
+---when the selection is not inside any box.
+---@usage [[
+---vim.keymap.set({ "n", "v" }, "<leader>cu", function()
+---  require("cbox").unbox()
+---end)
+---@usage ]]
 function M.unbox()
   local sel = require("cbox.detect").get_selection()
   require("cbox.api").unwrap(sel, vim.api.nvim_get_current_buf())
 end
 
----@param opts? BoxOpts
+---Draws a box if the selection has none, strips it if a box already encloses
+---it, or merges/redraws when the selection partially overlaps existing boxes.
+---@param opts? cbox.opts
+---@usage [[
+---vim.keymap.set({ "n", "v" }, "<leader>cc", function()
+---  require("cbox").toggle()
+---end)
+---@usage ]]
 function M.toggle(opts)
   local detect = require("cbox.detect")
   local api = require("cbox.api")
