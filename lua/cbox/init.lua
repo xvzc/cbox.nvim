@@ -25,17 +25,20 @@
 
 ---@alias cbox.preset string[] 8-element list: tl, top-fill, tr, left, right, bl, bottom-fill, br
 
+---@class cbox.visual_line_opts
+---@field style? string  "line" (per-row markers) | "block" (single spanning block comment around the whole box, when the filetype has a block template) — default: `"line"`
+---@field width? integer fixed total display width for the box (default: auto-fit)
+---@field align? string  "left" | "right" | "center" — alignment within `width` (default: `"left"`)
+
 ---@class cbox.config
 ---@field theme string                                                    theme name selected from `presets` (default: "thin")
----@field vline_style string                                              preferred comment kind for V-line wraps: `"line"` | `"block"` (default: `"line"`).  `"block"` emits a single spanning block comment around the whole box; only takes effect when the filetype has a block template configured.
+---@field visual_line cbox.visual_line_opts                               V-line-only wrap options (style, width, align).  Non-V-line wraps ignore these.
 ---@field presets table<string, cbox.preset>                              named border-character sets
 ---@field comment_str table<string, string|{line?: string, block?: string}>  per-filetype comment template — either a string (auto-classified) or a `{ line?, block? }` table.  Filetypes not listed fall back to `vim.bo[bufnr].commentstring`.
 
 ---@class cbox.opts
----@field theme? string         border preset name; defaults to `config.theme`
----@field vline_style? string   override `config.vline_style` for this call
----@field width? integer        fixed total display width (default: auto)
----@field align? string         "left" | "right" | "center" — alignment when `width` is set (default: "left")
+---@field theme? string                         border preset name; defaults to `config.theme`
+---@field visual_line? cbox.visual_line_opts    V-line-only options (style/width/align) — partial override of `config.visual_line`
 
 local defaults = require("cbox.defaults")
 
@@ -65,24 +68,38 @@ local function resolve_opts(opts)
     opts = { theme = opts }
   end
   opts = opts or {}
+  local cfg_vline = M.config.visual_line or {}
+  local opt_vline = opts.visual_line or {}
   return {
     theme = opts.theme or M.config.theme,
-    vline_style = opts.vline_style or M.config.vline_style,
-    width = opts.width,
-    align = opts.align or "left",
+    visual_line = {
+      style = opt_vline.style or cfg_vline.style or "line",
+      width = opt_vline.width or cfg_vline.width,
+      align = opt_vline.align or cfg_vline.align or "left",
+    },
   }
 end
 
 -- ===== V-line block wrap =====
 --
--- When the user wraps a V-line selection with `vline_style = "block"` AND
--- the filetype has a block template, emit a single spanning block comment
--- around the whole box instead of the default per-row line comments:
+-- When the user wraps a V-line selection with `visual_line.style = "block"`
+-- AND the filetype has a block template, emit a single spanning block
+-- comment around the whole box instead of per-row line comments:
 --
 --   // box      →   /* ┌─────┐
 --   // box             │ box │
 --   // box             │ box │
 --   // box             └─────┘ */
+--
+-- Four input shapes are recognized:
+--   "both":    selection contains a full /* ... */ pair (or no comment context
+--              and we wrap fresh as standard spanning).
+--   "opener":  selection starts with `/*` but the closer sits OUTSIDE the
+--              selection above/below — emit `/*` on its own row above the
+--              new box, leave the closer where it is.
+--   "closer":  selection ends with `*/` but the opener sits OUTSIDE — append
+--              `*/` to the box's last row, leave the opener where it is.
+--   "none":    no comment context — wrap as standard spanning.
 --
 -- Returns true on success.  Returns false when there's no block template
 -- available — caller should fall back to the regular wrap path.
@@ -101,6 +118,13 @@ local function vline_block_wrap(sel, bufnr, opts)
   if not block_tpl or block_tpl.kind ~= "block" then
     return false
   end
+
+  local opener = block_tpl.opener or ""
+  local closer = block_tpl.closer or ""
+  local before = block_tpl.before
+  local after = block_tpl.after
+  local before_disp = vim.fn.strdisplaywidth(before)
+  local inner_indent = string.rep(" ", before_disp)
 
   -- Expand the working range to include any boxes that overlap the
   -- selection — the selection conceptually covers the boxes as a unit, so
@@ -122,26 +146,124 @@ local function vline_block_wrap(sel, bufnr, opts)
     return false
   end
 
-  -- Dissolve any existing boxes in the work range: in-place erase replaces
-  -- box characters with content (or content-width spaces on border rows),
-  -- and is_effectively_blank drops border-only rows.  After this step,
-  -- `lines` holds the cleaned content with no inner boxes.
+  -- Dissolve any existing boxes: in-place erase + drop border-only rows.
   if #boxes > 0 then
     local result =
       render.unwrap_overlapping_blockwise(lines, work_top, boxes, filetype, bufnr)
     lines = result.lines
   end
 
-  -- Strip per-row comment markers when present, otherwise treat the input
-  -- as plain content (keep leading whitespace as box-level outer indent).
-  local stripped, ctx = comment.strip(lines, filetype, bufnr)
-  local outer_indent
-  if ctx then
-    outer_indent = ctx.prefix:match("^(%s*)") or ""
-  else
-    -- Plain text: pull the longest common leading whitespace off all rows
-    -- and use it as outer indent so the spanning emit sits at the source
-    -- indent level.
+  -- Detect the comment shape.  Try full spanning via comment.strip first;
+  -- fall back to dangling-delimiter detection.
+  local mode -- "both" | "opener" | "closer" | "none"
+  local outer_indent -- where opener row would sit (relevant for both/opener/none)
+  local stripped
+  local strip_ctx
+
+  do
+    local s, c = comment.strip(lines, filetype, bufnr)
+    if c then
+      -- Any per-line or spanning detection wins; dangling-delimiter
+      -- detection is only for inputs comment.strip can't classify.
+      stripped = s
+      if c.is_spanning then
+        mode = "both"
+        outer_indent = c.indent_outer or ""
+      else
+        mode = "none"
+        strip_ctx = c
+      end
+    end
+  end
+
+  if not mode then
+    -- Check for dangling opener at start of row 1.
+    local dangling_opener_indent
+    if #lines >= 1 and #opener > 0 then
+      local first = lines[1]
+      local m = first:match("^(%s*)" .. vim.pesc(opener) .. "%s")
+        or first:match("^(%s*)" .. vim.pesc(opener) .. "$")
+      if m then
+        dangling_opener_indent = m
+      end
+    end
+
+    -- Check for dangling closer at end of last row.
+    local dangling_closer = false
+    if #lines >= 1 and #closer > 0 then
+      if vim.endswith(lines[#lines], closer) then
+        dangling_closer = true
+      end
+    end
+
+    if dangling_opener_indent and dangling_closer then
+      -- Both delimiters present but spanning detect failed (middle rows
+      -- don't conform to the spanning's inner_indent).  Strip both ends
+      -- and treat as "both".
+      mode = "both"
+      outer_indent = dangling_opener_indent
+      lines[1] = lines[1]:gsub(
+        "^" .. vim.pesc(dangling_opener_indent) .. vim.pesc(opener) .. "%s?",
+        ""
+      )
+      local last = lines[#lines]
+      lines[#lines] = last:sub(1, #last - #closer):gsub("%s+$", "")
+      stripped = lines
+    elseif dangling_opener_indent then
+      mode = "opener"
+      outer_indent = dangling_opener_indent
+      -- Strip opener (with optional trailing space) from row 1.
+      lines[1] = lines[1]:gsub(
+        "^" .. vim.pesc(dangling_opener_indent) .. vim.pesc(opener) .. "%s?",
+        ""
+      )
+      -- Strip <outer_indent><inner_indent> from rows 2..N so all rows
+      -- align to the spanning's content indent before the wrap.
+      local strip_w = #dangling_opener_indent + before_disp
+      for i = 2, #lines do
+        local row = lines[i]
+        local row_indent = row:match("^(%s*)") or ""
+        local w = math.min(strip_w, #row_indent)
+        lines[i] = row:sub(w + 1)
+      end
+      stripped = lines
+    elseif dangling_closer then
+      mode = "closer"
+      -- Strip closer (with optional leading space) from last row.
+      local last = lines[#lines]
+      lines[#lines] = last:sub(1, #last - #closer):gsub("%s+$", "")
+      stripped = lines
+      -- outer_indent computed below from common leading ws.
+    else
+      -- No comment context anywhere — plain content.
+      mode = "none"
+      stripped = lines
+    end
+  end
+
+  -- For "none" and "closer", derive outer_indent from the input.
+  if mode == "none" then
+    if strip_ctx then
+      outer_indent = strip_ctx.prefix:match("^(%s*)") or ""
+    else
+      -- Plain text: longest common leading whitespace.
+      outer_indent = stripped[1]:match("^(%s*)") or ""
+      for i = 2, #stripped do
+        local row_indent = stripped[i]:match("^(%s*)") or ""
+        while #outer_indent > 0 and not vim.startswith(row_indent, outer_indent) do
+          outer_indent = outer_indent:sub(1, -2)
+        end
+        if outer_indent == "" then
+          break
+        end
+      end
+      for i, line in ipairs(stripped) do
+        stripped[i] = line:sub(#outer_indent + 1)
+      end
+    end
+  elseif mode == "closer" then
+    -- The selection sits inside an existing spanning context; its leading
+    -- whitespace IS the box's column — emit the box at that indent.
     outer_indent = stripped[1]:match("^(%s*)") or ""
     for i = 2, #stripped do
       local row_indent = stripped[i]:match("^(%s*)") or ""
@@ -165,16 +287,10 @@ local function vline_block_wrap(sel, bufnr, opts)
   local content_start = 1
   local content_end = math.max(max_disp, 1)
   local preset = cfg.presets[opts.theme or cfg.theme]
-  local box_lines = render.wrap_lines(stripped, content_start, content_end, preset, opts)
-
-  -- Wrap the box in a single spanning block comment.  Row 1 has the opener
-  -- inline; middle rows are space-indented to align with the opener's
-  -- trailing space; the last row has the closer appended (with padding so
-  -- it aligns with the widest box row).
-  local before = block_tpl.before
-  local after = block_tpl.after
-  local before_disp = vim.fn.strdisplaywidth(before)
-  local inner_indent = string.rep(" ", before_disp)
+  local vline = opts.visual_line or {}
+  local render_opts = { width = vline.width, align = vline.align }
+  local box_lines =
+    render.wrap_lines(stripped, content_start, content_end, preset, render_opts)
 
   local max_w = 0
   for _, line in ipairs(box_lines) do
@@ -185,17 +301,42 @@ local function vline_block_wrap(sel, bufnr, opts)
   end
 
   local result = {}
-  for i, line in ipairs(box_lines) do
-    local lead = (i == 1) and (outer_indent .. before) or (outer_indent .. inner_indent)
-    local trail = ""
-    if i == #box_lines then
-      local pad = max_w - vim.fn.strdisplaywidth(line)
-      if pad > 0 then
-        line = line .. string.rep(" ", pad)
+  if mode == "both" or mode == "none" then
+    -- Standard spanning: opener inline row 1, closer appended (padded) to
+    -- the last row.  Middle rows space-indented.
+    for i, line in ipairs(box_lines) do
+      local lead = (i == 1) and (outer_indent .. before) or (outer_indent .. inner_indent)
+      local trail = ""
+      if i == #box_lines then
+        local pad = max_w - vim.fn.strdisplaywidth(line)
+        if pad > 0 then
+          line = line .. string.rep(" ", pad)
+        end
+        trail = after
       end
-      trail = after
+      table.insert(result, lead .. line .. trail)
     end
-    table.insert(result, lead .. line .. trail)
+  elseif mode == "opener" then
+    -- Opener on its own row above the box (the closer is outside the
+    -- selection and stays untouched in the buffer).
+    table.insert(result, outer_indent .. opener)
+    for _, line in ipairs(box_lines) do
+      table.insert(result, outer_indent .. inner_indent .. line)
+    end
+  else -- mode == "closer"
+    -- Box at the existing inner indent; closer appended (padded) to last
+    -- row.  Opener is outside the selection and stays untouched.
+    for i, line in ipairs(box_lines) do
+      local trail = ""
+      if i == #box_lines then
+        local pad = max_w - vim.fn.strdisplaywidth(line)
+        if pad > 0 then
+          line = line .. string.rep(" ", pad)
+        end
+        trail = after
+      end
+      table.insert(result, outer_indent .. line .. trail)
+    end
   end
 
   vim.api.nvim_buf_set_lines(bufnr, work_top - 1, work_bot, false, result)
@@ -210,17 +351,28 @@ end
 ---  require("cbox").box({ theme = "double" })
 ---end)
 ---@usage ]]
+-- Build flat opts for the api.wrap path.  visual_line.width/align apply
+-- only when the selection is V-line; non-V-line wraps drop them entirely.
+local function api_opts(resolved, sel_is_linewise)
+  local vline = resolved.visual_line or {}
+  if sel_is_linewise then
+    return { theme = resolved.theme, width = vline.width, align = vline.align }
+  end
+  return { theme = resolved.theme }
+end
+
 function M.box(opts)
   local detect = require("cbox.detect")
   local sel = detect.get_selection()
   local bufnr = vim.api.nvim_get_current_buf()
   local resolved = resolve_opts(opts)
-  if detect.is_linewise(sel) and resolved.vline_style == "block" then
+  local linewise = detect.is_linewise(sel)
+  if linewise and resolved.visual_line.style == "block" then
     if vline_block_wrap(sel, bufnr, resolved) then
       return
     end
   end
-  require("cbox.api").wrap(sel, bufnr, resolved)
+  require("cbox.api").wrap(sel, bufnr, api_opts(resolved, linewise))
 end
 
 ---Strips the box that contains (or overlaps) the visual selection.  No-op
@@ -250,19 +402,20 @@ function M.toggle(opts)
   local bufnr = vim.api.nvim_get_current_buf()
   local boxes = detect.find_boxes(sel, bufnr)
   local resolved = resolve_opts(opts)
+  local linewise = detect.is_linewise(sel)
 
-  -- V-line wrap with vline_style=block: route through the spanning-block
-  -- emitter when the toggle's direction is "wrap".  Unwrap goes through
-  -- api.unwrap; the spanning block delimiters around an erased box are not
-  -- yet auto-stripped (deferred to a later pass).
+  -- V-line wrap with visual_line.style=block: route through the spanning-
+  -- block emitter when the toggle's direction is "wrap".  Unwrap goes
+  -- through api.unwrap (which demotes spanning back to per-line line).
   local function maybe_block_wrap()
-    if detect.is_linewise(sel) and resolved.vline_style == "block" then
+    if linewise and resolved.visual_line.style == "block" then
       if vline_block_wrap(sel, bufnr, resolved) then
         return true
       end
     end
     return false
   end
+  local flat = api_opts(resolved, linewise)
 
   -- Direction:
   --   * 0 boxes / multi-box / OUTSIDE classify       → wrap.
@@ -276,7 +429,7 @@ function M.toggle(opts)
     if maybe_block_wrap() then
       return
     end
-    return api.wrap(sel, bufnr, resolved)
+    return api.wrap(sel, bufnr, flat)
   end
 
   local position = detect.classify(sel, boxes).position
@@ -284,24 +437,24 @@ function M.toggle(opts)
     if maybe_block_wrap() then
       return
     end
-    return api.wrap(sel, bufnr, resolved)
+    return api.wrap(sel, bufnr, flat)
   end
 
-  if detect.is_linewise(sel) then
+  if linewise then
     local b = boxes[1]
     local strictly_inside = sel.start_line > b.top and sel.end_line < b.bottom
     if strictly_inside and not detect.box_is_clean_linewise(b, bufnr) then
       if maybe_block_wrap() then
         return
       end
-      api.wrap(sel, bufnr, resolved)
+      api.wrap(sel, bufnr, flat)
     else
       api.unwrap(sel, bufnr)
     end
   elseif detect.boundaries_align(sel, boxes[1], bufnr) then
     api.unwrap(sel, bufnr)
   else
-    api.wrap(sel, bufnr, resolved)
+    api.wrap(sel, bufnr, flat)
   end
 end
 

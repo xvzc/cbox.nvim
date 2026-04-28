@@ -37,11 +37,19 @@ cbox.preset                                                        *cbox.preset*
         string[]
 
 
+cbox.visual_line_opts                                    *cbox.visual_line_opts*
+
+    Fields: ~
+        {style?}  (string)   "line" (per-row markers) | "block" (single spanning block comment around the whole box, when the filetype has a block template) — default: `"line"`
+        {width?}  (integer)  fixed total display width for the box (default: auto-fit)
+        {align?}  (string)   "left" | "right" | "center" — alignment within `width` (default: `"left"`)
+
+
 cbox.config                                                        *cbox.config*
 
     Fields: ~
         {theme}        (string)                                             theme name selected from `presets` (default: "thin")
-        {vline_style}  (string)                                             preferred comment kind for V-line wraps: `"line"` | `"block"` (default: `"line"`).  `"block"` emits a single spanning block comment around the whole box; only takes effect when the filetype has a block template configured.
+        {visual_line}  (cbox.visual_line_opts)                              V-line-only wrap options (style, width, align).  Non-V-line wraps ignore these.
         {presets}      (table<string,cbox.preset>)                          named border-character sets
         {comment_str}  (table<string,string|{line?:string,block?:string}>)  per-filetype comment template — either a string (auto-classified) or a `{ line?, block? }` table.  Filetypes not listed fall back to `vim.bo[bufnr].commentstring`.
 
@@ -49,10 +57,8 @@ cbox.config                                                        *cbox.config*
 cbox.opts                                                            *cbox.opts*
 
     Fields: ~
-        {theme?}        (string)   border preset name; defaults to `config.theme`
-        {vline_style?}  (string)   override `config.vline_style` for this call
-        {width?}        (integer)  fixed total display width (default: auto)
-        {align?}        (string)   "left" | "right" | "center" — alignment when `width` is set (default: "left")
+        {theme?}        (string)                 border preset name; defaults to `config.theme`
+        {visual_line?}  (cbox.visual_line_opts)  V-line-only options (style/width/align) — partial override of `config.visual_line`
 
 
 M.setup({opts?})                                                    *cbox.setup*
@@ -74,19 +80,7 @@ M.setup({opts?})                                                    *cbox.setup*
 <
 
 
-M.box({opts?})                                                        *cbox.box*
-    Wraps the visual selection (or the word under the cursor in normal mode)
-    in a comment box.
-
-    Parameters: ~
-        {opts?}  (cbox.opts)
-
-    Usage: ~
->lua
-        vim.keymap.set("v", "<leader>cb", function()
-          require("cbox").box({ theme = "double" })
-        end)
-<
+M.box()                                                               *cbox.box*
 
 
 M.unbox()                                                           *cbox.unbox*

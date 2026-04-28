@@ -107,7 +107,7 @@ describe("cbox (init)", function()
     it("box with opts.width pads to fixed width", function()
       local bufnr = h.make_buf({ "hi" })
       h.with_visual(bufnr, 1, 1, nil, nil, "V", function()
-        cbox.box({ theme = "thin", width = 10 })
+        cbox.box({ theme = "thin", visual_line = { width = 10 } })
       end)
       assert.are.same({
         "┌────────┐",
@@ -119,7 +119,7 @@ describe("cbox (init)", function()
     it("box with opts.width + align=center centers content", function()
       local bufnr = h.make_buf({ "hi" })
       h.with_visual(bufnr, 1, 1, nil, nil, "V", function()
-        cbox.box({ theme = "thin", width = 10, align = "center" })
+        cbox.box({ theme = "thin", visual_line = { width = 10, align = "center" } })
       end)
       assert.are.same({
         "┌────────┐",
@@ -155,7 +155,7 @@ describe("cbox (init)", function()
     end)
 
     it("default vline_style is 'line'", function()
-      assert.are.equal("line", cbox.config.vline_style)
+      assert.are.equal("line", cbox.config.visual_line.style)
     end)
   end)
 
@@ -633,7 +633,7 @@ describe("cbox (init)", function()
       function()
         local bufnr = h.make_buf({ "box", "  box", "    box" })
         h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
-          cbox.box({ theme = "thin", width = 15, align = "center" })
+          cbox.box({ theme = "thin", visual_line = { width = 15, align = "center" } })
         end)
         -- All rows share the core "box" (w=3), so center_min_lpad = (11-3)/2
         -- = 4 floor.  Each row's leading whitespace is then preserved in
@@ -653,10 +653,10 @@ describe("cbox (init)", function()
       function()
         local bufnr = h.make_buf({ "box", "  box", "    box" })
         h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
-          cbox.toggle({ theme = "thin", width = 15, align = "center" })
+          cbox.toggle({ theme = "thin", visual_line = { width = 15, align = "center" } })
         end)
         h.with_visual(bufnr, 2, 4, nil, nil, "V", function()
-          cbox.toggle({ theme = "thin", width = 15, align = "center" })
+          cbox.toggle({ theme = "thin", visual_line = { width = 15, align = "center" } })
         end)
         assert.are.same({ "box", "  box", "    box" }, get_lines(bufnr))
       end
@@ -709,7 +709,7 @@ describe("cbox (init)", function()
           "  // box",
         }, "c")
         h.with_visual(bufnr, 1, 4, nil, nil, "V", function()
-          cbox.box({ theme = "thin", vline_style = "block" })
+          cbox.box({ theme = "thin", visual_line = { style = "block" } })
         end)
         assert.are.same({
           "  /* ┌─────┐",
@@ -725,7 +725,7 @@ describe("cbox (init)", function()
     it("plain content (no comments): wraps with the configured block template", function()
       local bufnr = h.make_buf({ "foo", "bar" }, "c")
       h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
-        cbox.box({ theme = "thin", vline_style = "block" })
+        cbox.box({ theme = "thin", visual_line = { style = "block" } })
       end)
       assert.are.same({
         "/* ┌─────┐",
@@ -740,7 +740,7 @@ describe("cbox (init)", function()
       function()
         local bufnr = h.make_buf({ "-- foo", "-- bar" }, "lua")
         h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
-          cbox.box({ theme = "thin", vline_style = "block" })
+          cbox.box({ theme = "thin", visual_line = { style = "block" } })
         end)
         assert.are.same({
           "--[[ ┌─────┐",
@@ -772,7 +772,7 @@ describe("cbox (init)", function()
       -- emit, so the wrap path falls through to the regular per-row wrap.
       local bufnr = h.make_buf({ "# foo", "# bar" }, "python")
       h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
-        cbox.box({ theme = "thin", vline_style = "block" })
+        cbox.box({ theme = "thin", visual_line = { style = "block" } })
       end)
       assert.are.same({
         "# ┌─────┐",
@@ -788,7 +788,7 @@ describe("cbox (init)", function()
         local bufnr = h.make_buf({ "foo bar baz" }, "c")
         -- blockwise selection on `bar`
         h.with_visual(bufnr, 1, 1, 5, 7, "\22", function()
-          cbox.box({ theme = "thin", vline_style = "block" })
+          cbox.box({ theme = "thin", visual_line = { style = "block" } })
         end)
         assert.are.same({
           "    ┌─────┐",
@@ -801,7 +801,7 @@ describe("cbox (init)", function()
     it("toggle on plain V-line input wraps with vline_style=block", function()
       local bufnr = h.make_buf({ "foo" }, "c")
       h.with_visual(bufnr, 1, 1, nil, nil, "V", function()
-        cbox.toggle({ theme = "thin", vline_style = "block" })
+        cbox.toggle({ theme = "thin", visual_line = { style = "block" } })
       end)
       assert.are.same({
         "/* ┌─────┐",
@@ -815,7 +815,7 @@ describe("cbox (init)", function()
       function()
         local bufnr = h.make_buf({ "<!-- foo -->", "<!-- bar -->" }, "html")
         h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
-          cbox.box({ theme = "thin", vline_style = "block" })
+          cbox.box({ theme = "thin", visual_line = { style = "block" } })
         end)
         assert.are.same({
           "<!-- ┌─────┐",
@@ -853,7 +853,7 @@ describe("cbox (init)", function()
         "  // box",
       }, "c")
       h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
-        cbox.box({ theme = "thin", vline_style = "block" })
+        cbox.box({ theme = "thin", visual_line = { style = "block" } })
       end)
       h.with_visual(bufnr, 2, 4, nil, nil, "V", function()
         cbox.unbox()
@@ -901,7 +901,7 @@ describe("cbox (init)", function()
           "// box box",
         }, "c")
         h.with_visual(bufnr, 2, 7, nil, nil, "V", function()
-          cbox.toggle({ theme = "thin", vline_style = "block" })
+          cbox.toggle({ theme = "thin", visual_line = { style = "block" } })
         end)
         assert.are.same({
           "// box box",
@@ -931,7 +931,7 @@ describe("cbox (init)", function()
           "// box box",
         }, "c")
         h.with_visual(bufnr, 3, 6, nil, nil, "V", function()
-          cbox.toggle({ theme = "thin", vline_style = "block" })
+          cbox.toggle({ theme = "thin", visual_line = { style = "block" } })
         end)
         assert.are.same({
           "// box box",
@@ -960,7 +960,7 @@ describe("cbox (init)", function()
           "// box box",
         }, "c")
         h.with_visual(bufnr, 3, 3, nil, nil, "V", function()
-          cbox.toggle({ theme = "thin", vline_style = "block" })
+          cbox.toggle({ theme = "thin", visual_line = { style = "block" } })
         end)
         assert.are.same({
           "// box box",
@@ -992,6 +992,57 @@ describe("cbox (init)", function()
         assert.are.same({
           "<!-- foo -->",
           "<!-- bar -->",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "dangling closer in selection: appends `*/` to box's last row, opener stays untouched",
+      function()
+        local bufnr = h.make_buf({
+          "  /*    ",
+          "     box",
+          "     box",
+          "     box",
+          "     box */",
+        }, "c")
+        h.with_visual(bufnr, 2, 5, nil, nil, "V", function()
+          cbox.box({ theme = "thin", visual_line = { style = "block" } })
+        end)
+        assert.are.same({
+          "  /*    ",
+          "     ┌─────┐",
+          "     │ box │",
+          "     │ box │",
+          "     │ box │",
+          "     │ box │",
+          "     └─────┘ */",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "dangling opener in selection: emits `/*` on its own row above the box, closer stays untouched",
+      function()
+        local bufnr = h.make_buf({
+          "  /* box",
+          "     box",
+          "     box",
+          "     box",
+          "*/",
+        }, "c")
+        h.with_visual(bufnr, 1, 4, nil, nil, "V", function()
+          cbox.box({ theme = "thin", visual_line = { style = "block" } })
+        end)
+        assert.are.same({
+          "  /*",
+          "     ┌─────┐",
+          "     │ box │",
+          "     │ box │",
+          "     │ box │",
+          "     │ box │",
+          "     └─────┘",
+          "*/",
         }, get_lines(bufnr))
       end
     )

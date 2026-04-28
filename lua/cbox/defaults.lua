@@ -1,11 +1,18 @@
 return {
   theme = "thin",
-  -- Preferred comment kind for V-line wraps.  "line" emits per-row markers
-  -- (// box / // box / ...).  "block" emits a single spanning block comment
-  -- surrounding the whole box (/* ┌...┐ ... └...┘ */).  Only takes effect
-  -- when the filetype has a block template configured; otherwise falls back
-  -- to whatever variant is available.
-  vline_style = "line",
+  -- V-line-specific wrap options.  These take effect only when the user's
+  -- selection is V-line (linewise visual mode); non-V-line wraps ignore
+  -- width/align and use the line-comment kind.
+  --   - style: "line" (per-row markers) | "block" (single spanning block
+  --            comment around the whole box).  "block" only takes effect
+  --            when the filetype has a block template configured.
+  --   - width: fixed total display width for the box (default: auto-fit).
+  --   - align: "left" | "right" | "center" — alignment when `width` is set
+  --            (default: "left").
+  visual_line = {
+    style = "line",
+    align = "left",
+  },
   presets = {
     bold = { "┏", "━", "┓", "┃", "┃", "┗", "━", "┛" },
     thin = { "┌", "─", "┐", "│", "│", "└", "─", "┘" },
