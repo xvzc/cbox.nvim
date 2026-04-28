@@ -30,23 +30,46 @@ local M = {}
 -- Trailing whitespace on `content` is treated as padding (stripped before
 -- measuring) so multi-row content extracted from rows of differing widths
 -- aligns based on each row's meaningful chars.
+--
+-- For align=center, the row's lpad is `max(independent_lpad, center_min_lpad)`
+-- where `independent_lpad = (target_w - current_w) / 2` (centers each row
+-- around its own width) and `center_min_lpad` is precomputed by the caller
+-- from the max "core" width (trimmed both sides) across rows.  This keeps
+-- rows with the same core width aligned to a common lpad — so per-row
+-- leading whitespace shifts content rightward — while shorter-core rows
+-- still center within their own slack.  Round-trippable by `unwrap_lines`'s
+-- min-baseline rule.
 ---@param content string
 ---@param target_w integer
 ---@param align "left"|"right"|"center"
+---@param center_min_lpad? integer  shared-lpad floor for align=center
 ---@return string
-local function pad_content(content, target_w, align)
+local function pad_content(content, target_w, align, center_min_lpad)
   local trimmed = content:gsub("%s+$", "")
   local current_w = vim.fn.strdisplaywidth(trimmed)
+
+  if align == "center" then
+    if current_w >= target_w then
+      return trimmed
+    end
+    local independent_lpad = math.floor((target_w - current_w) / 2)
+    local lpad = math.max(independent_lpad, center_min_lpad or 0)
+    -- Cap lpad so content still fits within target_w (relevant when shared-
+    -- min lpad would push a row past the right edge).
+    local max_lpad = target_w - current_w
+    if lpad > max_lpad then
+      lpad = max_lpad
+    end
+    local rpad = target_w - lpad - current_w
+    return string.rep(" ", lpad) .. trimmed .. string.rep(" ", rpad)
+  end
+
   local slack = target_w - current_w
   if slack <= 0 then
     return trimmed
   end
   if align == "right" then
     return string.rep(" ", slack) .. trimmed
-  elseif align == "center" then
-    local lpad = math.floor(slack / 2)
-    local rpad = slack - lpad
-    return string.rep(" ", lpad) .. trimmed .. string.rep(" ", rpad)
   end
   return trimmed .. string.rep(" ", slack)
 end
@@ -80,7 +103,8 @@ function M.wrap_lines(lines, content_start, content_end, preset, opts)
   local border_indent = string.rep(" ", indent_disp)
   local align = (opts and opts.align) or "left"
 
-  local new_lines = {}
+  -- Pass 1: extract per-row { prefix_bytes, content, suffix }.
+  local extracted = {}
   for _, line in ipairs(lines) do
     local line_disp = vim.fn.strdisplaywidth(line)
     if line_disp < content_end then
@@ -92,8 +116,39 @@ function M.wrap_lines(lines, content_start, content_end, preset, opts)
     local prefix_bytes = line:sub(1, content_start_byte - 1)
     local content = line:sub(content_start_byte, content_end_byte)
     local suffix = line:sub(content_end_byte + 1)
-    local padded = pad_content(content, target_content_w, align)
-    table.insert(new_lines, prefix_bytes .. l .. " " .. padded .. " " .. r .. suffix)
+    table.insert(extracted, {
+      prefix_bytes = prefix_bytes,
+      content = content,
+      suffix = suffix,
+    })
+  end
+
+  -- Center alignment derives a shared-lpad floor from the widest "core"
+  -- (trimmed both sides) across rows.  Rows with that max core width are
+  -- centered against that floor (so per-row leading whitespace shifts them
+  -- right uniformly); rows with shorter cores still center within their own
+  -- larger slack.
+  local center_min_lpad
+  if align == "center" then
+    local max_core_w = 0
+    for _, ex in ipairs(extracted) do
+      local core = ex.content:match("^%s*(.-)%s*$") or ""
+      local cw = vim.fn.strdisplaywidth(core)
+      if cw > max_core_w then
+        max_core_w = cw
+      end
+    end
+    center_min_lpad = math.max(0, math.floor((target_content_w - max_core_w) / 2))
+  end
+
+  -- Pass 2: render each row.
+  local new_lines = {}
+  for _, ex in ipairs(extracted) do
+    local padded = pad_content(ex.content, target_content_w, align, center_min_lpad)
+    table.insert(
+      new_lines,
+      ex.prefix_bytes .. l .. " " .. padded .. " " .. r .. ex.suffix
+    )
   end
 
   local top_border = border_indent .. tl .. string.rep(fill, inner_disp) .. tr
@@ -107,45 +162,83 @@ end
 
 ---Strips a box from `lines`.  `lines[1]` is the top border, `lines[#lines]`
 ---is the bottom border, and the middle rows have side chars at display
----columns `l_disp` (left side) and `r_disp` (right side).  Returns the
----content rows with side chars, padding spaces, and trailing whitespace
----stripped.
+---columns `l_disp` (left side) and `r_disp` (right side).
+---
+---Per-row leading whitespace is recovered by min-baseline: each row's
+---`content_start` (first non-whitespace position inside the box, after the
+---1-char inner padding) is compared to the minimum across rows, and the
+---difference becomes the row's leading whitespace.  A single content row
+---thus recovers tight content (min == self), while multi-row boxes preserve
+---relative indentation differences across rows (round-trippable with the
+---`pad_content` align rules in |cbox.render.wrap_lines|).
+---
+---Chars outside the box (the prefix before the left side char and the
+---suffix after the right side char) are preserved verbatim.
 ---@param lines string[]
 ---@param l_disp integer 1-indexed display col of the left side char
 ---@param r_disp integer 1-indexed display col of the right side char
 ---@param preset cbox.preset
----@param linewise? boolean  when true, also strip leading whitespace from
----                          inner content (recovers `box` from `   box   `
----                          in centered/right-aligned linewise wraps).
----                          Blockwise calls keep leading whitespace because
----                          the caller's column selection determined it.
 ---@return string[]
-function M.unwrap_lines(lines, l_disp, r_disp, preset, linewise)
+function M.unwrap_lines(lines, l_disp, r_disp, preset)
   local l, r = preset[4], preset[5]
 
-  local stripped = {}
+  local rows = {}
   for i = 2, #lines - 1 do
     local line = lines[i]
     local l_byte = detect.byte_at_disp(line, l_disp)
     local r_byte = detect.byte_at_disp(line, r_disp)
     if not l_byte or not r_byte then
-      table.insert(stripped, line)
+      table.insert(rows, { malformed = line })
     else
       local prefix_part = line:sub(1, l_byte - 1)
       local inner = line:sub(l_byte + #l, r_byte - 1)
       local suffix = line:sub(r_byte + #r)
+      -- Strip the 1-char inner padding (a leading and a trailing space) when
+      -- present.  These are always emitted by `wrap_lines`.
       if vim.startswith(inner, " ") then
         inner = inner:sub(2)
       end
       if vim.endswith(inner, " ") then
-        inner = inner:sub(1, #inner - 1)
+        inner = inner:sub(1, -2)
       end
-      if linewise then
-        inner = inner:match("^%s*(.-)%s*$")
-      else
-        inner = inner:match("^(.-)%s*$")
+      local has_content = inner:match("%S") ~= nil
+      local leading = 0
+      if has_content then
+        leading = #(inner:match("^( *)") or "")
       end
-      table.insert(stripped, prefix_part .. inner .. suffix)
+      table.insert(rows, {
+        prefix = prefix_part,
+        inner = inner,
+        suffix = suffix,
+        leading = leading,
+        has_content = has_content,
+      })
+    end
+  end
+
+  local min_leading = math.huge
+  for _, row in ipairs(rows) do
+    if row.has_content and row.leading < min_leading then
+      min_leading = row.leading
+    end
+  end
+  if min_leading == math.huge then
+    min_leading = 0
+  end
+
+  local stripped = {}
+  for _, row in ipairs(rows) do
+    if row.malformed then
+      table.insert(stripped, row.malformed)
+    elseif row.has_content then
+      local core = row.inner:match("^%s*(.-)%s*$") or row.inner
+      local rel = row.leading - min_leading
+      local recovered = string.rep(" ", rel) .. core
+      table.insert(stripped, row.prefix .. recovered .. row.suffix)
+    else
+      -- All-whitespace inner: preserve as-is so a wrapped lone-space content
+      -- round-trips back to a space rather than collapsing to "".
+      table.insert(stripped, row.prefix .. row.inner .. row.suffix)
     end
   end
   return stripped
@@ -191,6 +284,34 @@ function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype, 
   -- a multi-box selection to the combined-box-contents-only range.
   local box_content_post = {}
 
+  -- Per-box, precompute the min leading-whitespace count across that box's
+  -- content rows.  Each row's recovered leading-ws is `leading - min`, so a
+  -- single-row box yields tight content (min == self) while multi-row boxes
+  -- preserve relative indentation differences (round-trippable with
+  -- |cbox.render.wrap_lines|'s align rules).
+  local min_leading_per_box = {}
+  for _, box in ipairs(boxes) do
+    local min_leading = math.huge
+    for r = box.top + 1, box.bottom - 1 do
+      local r_offset = r - top_row_offset + 1
+      local line = lines[r_offset]
+      if line then
+        local cs_byte = detect.byte_at_disp(line, box.disp_range.start + 2)
+        local ce_plus_one = detect.byte_at_disp(line, box.disp_range["end"] - 1)
+        if cs_byte and ce_plus_one then
+          local raw = line:sub(cs_byte, ce_plus_one - 1)
+          if raw:match("%S") then
+            local leading = #(raw:match("^( *)") or "")
+            if leading < min_leading then
+              min_leading = leading
+            end
+          end
+        end
+      end
+    end
+    min_leading_per_box[box] = (min_leading == math.huge) and 0 or min_leading
+  end
+
   for r_offset, line in ipairs(lines) do
     local row = top_row_offset + r_offset - 1
 
@@ -220,18 +341,20 @@ function M.unwrap_overlapping_blockwise(lines, top_row_offset, boxes, filetype, 
       local replacement
       if row > box.top and row < box.bottom then
         -- Content row: pull out the box's actual content (between the inner
-        -- padding spaces) and use that as the replacement.  Trailing
-        -- whitespace is the wrap_lines pad (only present when the row is
-        -- shorter than the widest content), so strip it — but only when the
-        -- raw content has at least one non-whitespace char, so we don't
-        -- destroy whitespace-only content (e.g. a wrapped single space).
+        -- padding spaces).  Strip its leading + trailing whitespace, then re-
+        -- attach `leading - min_leading` spaces at the front so multi-row
+        -- boxes preserve relative indentation differences.  Whitespace-only
+        -- content is preserved as-is so a wrapped lone space round-trips.
         local content_start_byte = detect.byte_at_disp(current, box.disp_range.start + 2)
         local content_end_plus_one =
           detect.byte_at_disp(current, box.disp_range["end"] - 1)
         if content_start_byte and content_end_plus_one then
           local raw = current:sub(content_start_byte, content_end_plus_one - 1)
           if raw:match("%S") then
-            replacement = raw:match("^(.-)%s*$") or raw
+            local leading = #(raw:match("^( *)") or "")
+            local core = raw:match("^%s*(.-)%s*$") or raw
+            local rel = leading - (min_leading_per_box[box] or 0)
+            replacement = string.rep(" ", rel) .. core
           else
             replacement = raw
           end
@@ -435,8 +558,9 @@ end
 ---@param end_col integer      1-indexed byte column on the content line
 ---@param preset table         preset for the new borders
 ---@param presets table        all known presets (used to verify above/below are borders)
----@param prefix? string       comment prefix to strip from above/below before detection
----@param suffix? string       comment suffix (block kind) to strip from above/below
+---@param prefix? string         comment prefix to strip from above/below before detection
+---@param suffix? string         comment suffix (block kind) to strip from above/below
+---@param restore_prefix? string canonical prefix to substitute back into the merged above/below (e.g. "# " when `prefix` was "#" because the source row lacked the canonical space)
 ---@return { above: string, below: string }|nil
 function M.merge_into_borders(
   above,
@@ -447,7 +571,8 @@ function M.merge_into_borders(
   preset,
   presets,
   prefix,
-  suffix
+  suffix,
+  restore_prefix
 )
   -- Block-kind suffix on above/below interferes with every replace/append
   -- strategy below (it makes the line longer than box_disp_start, prevents
@@ -510,6 +635,26 @@ function M.merge_into_borders(
     raw_bot
   )
 
+  -- Canonicalize the comment prefix in the merged above/below: when the
+  -- caller's strip prefix differs from the canonical (e.g. "#" vs "# "), the
+  -- byte-replace strategies leave the line starting with the actual marker
+  -- only.  Substitute the canonical prefix so the result reads as a properly
+  -- spaced comment ("# ┌──┐..." rather than "#┌──┐...").
+  if
+    result
+    and prefix
+    and #prefix > 0
+    and restore_prefix
+    and prefix ~= restore_prefix
+  then
+    if vim.startswith(result.above, prefix) then
+      result.above = restore_prefix .. result.above:sub(#prefix + 1)
+    end
+    if vim.startswith(result.below, prefix) then
+      result.below = restore_prefix .. result.below:sub(#prefix + 1)
+    end
+  end
+
   if result and has_suffix then
     result.above = result.above .. suffix
     result.below = result.below .. suffix
@@ -549,6 +694,7 @@ local function try_merge_into_adjacent_borders(
     return nil
   end
   local suffix = (cmt_ctx and cmt_ctx.suffix) or ""
+  local restore_prefix = (cmt_ctx and cmt_ctx.restore_prefix) or prefix
   local merged = M.merge_into_borders(
     snap.above,
     snap.below,
@@ -558,7 +704,8 @@ local function try_merge_into_adjacent_borders(
     preset,
     presets,
     prefix,
-    suffix
+    suffix,
+    restore_prefix
   )
   if not merged then
     return nil
@@ -613,49 +760,35 @@ function M.wrap(snap, preset, presets, opts)
 
   local content_start, content_end
   if snap.is_linewise then
-    -- Hoist the longest common leading whitespace of the (post-comment-strip)
-    -- content lines into the box's indent: a V-line wrap of `["  foo", "  bar"]`
-    -- produces "  ┌────┐ / `  │ foo │` / `  │ bar │` / `  └────┘`, not a box
-    -- starting at col 1 with "  " baked into the content.  The unwrap path
-    -- restores the indent automatically because the chars before the left
-    -- side char are preserved as `prefix_part`.
-    local common = nil
-    for _, line in ipairs(stripped) do
-      if line:match("%S") then
-        local lws = line:match("^(%s*)") or ""
-        if common == nil then
-          common = lws
-        else
-          local n = math.min(#common, #lws)
-          local i = 1
-          while i <= n and common:sub(i, i) == lws:sub(i, i) do
-            i = i + 1
-          end
-          common = common:sub(1, i - 1)
-        end
-      end
-    end
-    common = common or ""
-
+    -- V-line: box's left edge sits at the start of the line (after any comment
+    -- prefix, which `comment.restore` re-attaches).  Leading whitespace inside
+    -- the line is content, not box indent — selection mode encodes intent, and
+    -- "V" means "wrap this whole line".
     local max_disp = 0
     for _, line in ipairs(stripped) do
       max_disp = math.max(max_disp, vim.fn.strdisplaywidth(line))
     end
-    local common_disp = vim.fn.strdisplaywidth(common)
-    content_start = common_disp + 1
-    content_end = math.max(max_disp, content_start)
+    content_start = 1
+    content_end = math.max(max_disp, 1)
   else
     if snap.end_col < snap.start_col or snap.end_col - snap.start_col > 10000 then
       return {}
     end
     local first = stripped[1] or ""
-    local sc = snap.start_col - prefix_bytes
-    local ec = snap.end_col - prefix_bytes
+    -- Clamp selection cols against the post-strip content's byte range.  When
+    -- the selection overlaps or sits inside the comment prefix (start_col
+    -- <= prefix_bytes), `start_col - prefix_bytes` would be 0 or negative and
+    -- `first:sub(1, -1)` returns the whole string instead of "" — making
+    -- content_start fall past the line and the wrap collapse to the line
+    -- end.  Clamping treats the selection as "the part that lies inside the
+    -- stripped content."
+    local sc = math.max(1, snap.start_col - prefix_bytes)
+    local ec = math.min(#first, math.max(0, snap.end_col - prefix_bytes))
     content_start = vim.fn.strdisplaywidth(first:sub(1, sc - 1)) + 1
     content_end = vim.fn.strdisplaywidth(first:sub(1, ec))
-    -- Empty selection on a short/empty line: ensure at least one display col
-    -- of content so the box has a non-degenerate width (matches the legacy
-    -- byte-based behavior of "1-byte content padded to 1 space").
+    -- Empty selection on a short/empty line, or selection entirely inside
+    -- the comment prefix: ensure at least one display col of content so the
+    -- box has a non-degenerate width.
     if content_end < content_start then
       content_end = content_start
     end
@@ -678,7 +811,12 @@ function M.wrap(snap, preset, presets, opts)
 
   local wrapped = M.wrap_lines(stripped, content_start, content_end, preset, opts)
   if cmt_ctx then
-    wrapped = comment.restore(wrapped, cmt_ctx)
+    -- Canonicalize the comment prefix only when the wrap actually consumes
+    -- the line's stripped content from its start.  A trailing/empty wrap
+    -- (content_start > 1) leaves the original text in place and would look
+    -- wrong if we silently inserted the canonical space.
+    local canonicalize = content_start == 1
+    wrapped = comment.restore(wrapped, cmt_ctx, { canonicalize = canonicalize })
   end
   return {
     { row_start = snap.row_start, row_end = snap.row_end, new_lines = wrapped },
@@ -728,7 +866,7 @@ function M.unwrap(snap, presets)
     r_disp = vim.fn.strdisplaywidth(top_line:sub(1, ec))
   end
 
-  local result = M.unwrap_lines(stripped, l_disp, r_disp, preset, snap.is_linewise)
+  local result = M.unwrap_lines(stripped, l_disp, r_disp, preset)
   if cmt_ctx then
     result = comment.restore(result, cmt_ctx)
   end

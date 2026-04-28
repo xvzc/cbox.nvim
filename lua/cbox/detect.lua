@@ -581,8 +581,15 @@ local function normal_mode_selection()
   local row = cursor[1]
   local col0 = cursor[2]
 
-  local line = vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1] or ""
+  local bufnr = vim.api.nvim_get_current_buf()
+  local line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
   local box_set = box_char_set()
+
+  -- A recognized comment prefix on this line is a hard boundary for the
+  -- cursor word: a word never extends into the marker (e.g. on `#box` the
+  -- word is `box`, not `#box`).
+  local _, ctx = comment.strip({ line }, vim.bo[bufnr].filetype, bufnr)
+  local prefix_end = (ctx and #ctx.prefix) or 0
 
   -- Resolve the char that contains the cursor (cursor may land on a
   -- continuation byte mid-multi-byte char).
@@ -591,7 +598,7 @@ local function normal_mode_selection()
   local cur_n = utf8_char_bytes(line, cur_start)
   local cur_char = (cur_n > 0) and line:sub(cur_start, cur_start + cur_n - 1) or ""
 
-  if is_word_boundary(cur_char, box_set) then
+  if cur_start <= prefix_end or is_word_boundary(cur_char, box_set) then
     local col1 = cur_start
     return {
       mode = Cv,
@@ -602,9 +609,10 @@ local function normal_mode_selection()
     }
   end
 
-  -- Walk back to start of word, char-by-char.
+  -- Walk back to start of word, char-by-char.  The prefix end + 1 is the
+  -- floor: the marker chars never become part of the selection.
   local sc = cur_start
-  while sc > 1 do
+  while sc > prefix_end + 1 do
     local prev_start = char_start_byte(line, sc - 1)
     if not prev_start then
       break

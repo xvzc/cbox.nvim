@@ -196,23 +196,27 @@ M.wrap_lines({lines}, {content_start}, {content_end}, {preset}, {opts?})
 
 
                                                       *cbox.render.unwrap_lines*
-M.unwrap_lines({lines}, {l_disp}, {r_disp}, {preset}, {linewise?})
+M.unwrap_lines({lines}, {l_disp}, {r_disp}, {preset})
     Strips a box from `lines`.  `lines[1]` is the top border, `lines[#lines]`
     is the bottom border, and the middle rows have side chars at display
-    columns `l_disp` (left side) and `r_disp` (right side).  Returns the
-    content rows with side chars, padding spaces, and trailing whitespace
-    stripped.
+    columns `l_disp` (left side) and `r_disp` (right side).
+
+    Per-row leading whitespace is recovered by min-baseline: each row's
+    `content_start` (first non-whitespace position inside the box, after the
+    1-char inner padding) is compared to the minimum across rows, and the
+    difference becomes the row's leading whitespace.  A single content row
+    thus recovers tight content (min == self), while multi-row boxes preserve
+    relative indentation differences across rows (round-trippable with the
+    `pad_content` align rules in |cbox.render.wrap_lines|).
+
+    Chars outside the box (the prefix before the left side char and the
+    suffix after the right side char) are preserved verbatim.
 
     Parameters: ~
-        {lines}      (string[])
-        {l_disp}     (integer)      1-indexed display col of the left side char
-        {r_disp}     (integer)      1-indexed display col of the right side char
-        {preset}     (cbox.preset)
-        {linewise?}  (boolean)      when true, also strip leading whitespace from
-                                                              inner content (recovers `box` from `   box   `
-                                                              in centered/right-aligned linewise wraps).
-                                                              Blockwise calls keep leading whitespace because
-                                                              the caller's column selection determined it.
+        {lines}   (string[])
+        {l_disp}  (integer)      1-indexed display col of the left side char
+        {r_disp}  (integer)      1-indexed display col of the right side char
+        {preset}  (cbox.preset)
 
     Returns: ~
         (string[])
@@ -251,18 +255,19 @@ M.unwrap_overlapping_blockwise({lines}, {top_row_offset}, {boxes}, {filetype?}, 
 
 
                                                 *cbox.render.merge_into_borders*
-M.merge_into_borders({above}, {below}, {content_line}, {start_col}, {end_col}, {preset}, {presets}, {prefix?}, {suffix?})
+M.merge_into_borders({above}, {below}, {content_line}, {start_col}, {end_col}, {preset}, {presets}, {prefix?}, {suffix?}, {restore_prefix?})
 
     Parameters: ~
-        {above}         (string)
-        {below}         (string)
-        {content_line}  (string)   the first content line (used for the box's display range)
-        {start_col}     (integer)  1-indexed byte column on the content line
-        {end_col}       (integer)  1-indexed byte column on the content line
-        {preset}        (table)    preset for the new borders
-        {presets}       (table)    all known presets (used to verify above/below are borders)
-        {prefix?}       (string)   comment prefix to strip from above/below before detection
-        {suffix?}       (string)   comment suffix (block kind) to strip from above/below
+        {above}            (string)
+        {below}            (string)
+        {content_line}     (string)   the first content line (used for the box's display range)
+        {start_col}        (integer)  1-indexed byte column on the content line
+        {end_col}          (integer)  1-indexed byte column on the content line
+        {preset}           (table)    preset for the new borders
+        {presets}          (table)    all known presets (used to verify above/below are borders)
+        {prefix?}          (string)   comment prefix to strip from above/below before detection
+        {suffix?}          (string)   comment suffix (block kind) to strip from above/below
+        {restore_prefix?}  (string)   canonical prefix to substitute back into the merged above/below (e.g. "# " when `prefix` was "#" because the source row lacked the canonical space)
 
     Returns: ~
         ({above:string,below:string}|nil)
@@ -327,9 +332,10 @@ cbox.comment.template                                    *cbox.comment.template*
 cbox.comment.ctx                                              *cbox.comment.ctx*
 
     Fields: ~
-        {prefix}  (string)  per-line leading prefix (indent + before)
-        {suffix}  (string)  per-line trailing suffix (after, "" for line kind)
-        {kind}    (string)  "line" | "block"
+        {prefix}          (string)  per-line leading prefix (indent + marker + actual space, what's stripped)
+        {restore_prefix}  (string)  canonical leading prefix (indent + template's `before`) used by `restore`; differs from `prefix` when the original line lacked the canonical space (e.g. `#box` → strip "#", restore "# ")
+        {suffix}          (string)  per-line trailing suffix (after, "" for line kind)
+        {kind}            (string)  "line" | "block"
 
 
 M.resolve_template({filetype}, {bufnr?})         *cbox.comment.resolve_template*
@@ -361,7 +367,13 @@ M.strip({lines}, {filetype}, {bufnr?})                      *cbox.comment.strip*
         (cbox.comment.ctx|nil)  ctx
 
 
-M.restore({lines}, {ctx})                                 *cbox.comment.restore*
+cbox.comment.restore_opts                            *cbox.comment.restore_opts*
+
+    Fields: ~
+        {canonicalize?}  (boolean)  when true (default), use `ctx.restore_prefix` (the canonical "marker + space" from the template) so wraps emit a clean "# ┌...┐" even if the source line was "#box".  Pass `false` to use the actual line prefix verbatim — for trailing/empty wraps that don't consume the line's content, where injecting a canonical space would visually shift the original text.
+
+
+M.restore({lines}, {ctx}, {opts?})                        *cbox.comment.restore*
     Restores the stored prefix (and suffix for block kind) to every line.
     For block kind, pads each line up to the max display width before
     appending the suffix so the closing delimiter aligns across rows.
@@ -369,6 +381,7 @@ M.restore({lines}, {ctx})                                 *cbox.comment.restore*
     Parameters: ~
         {lines}  (string[])
         {ctx}    (cbox.comment.ctx)
+        {opts?}  (cbox.comment.restore_opts)
 
     Returns: ~
         (string[])

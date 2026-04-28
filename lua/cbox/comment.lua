@@ -20,9 +20,10 @@ local M = {}
 ---@field after string   chars after `%s` in the template
 
 ---@class cbox.comment.ctx
----@field prefix string  per-line leading prefix (indent + before)
----@field suffix string  per-line trailing suffix (after, "" for line kind)
----@field kind string  "line" | "block"
+---@field prefix string          per-line leading prefix (indent + marker + actual space, what's stripped)
+---@field restore_prefix string  canonical leading prefix (indent + template's `before`) used by `restore`; differs from `prefix` when the original line lacked the canonical space (e.g. `#box` → strip "#", restore "# ")
+---@field suffix string          per-line trailing suffix (after, "" for line kind)
+---@field kind string            "line" | "block"
 
 local function parse_template(template)
   local before, after = template:match("^(.-)%%s(.*)$")
@@ -107,7 +108,17 @@ local function detect_prefix(lines, filetype, bufnr)
     end
   end
 
-  return { prefix = prefix, suffix = suffix, kind = resolved.kind }
+  -- The canonical restore prefix uses the template's `before` (e.g. "# "),
+  -- so wrapping `#foo` (no space after marker) emits "# ┌...┐" — the box is
+  -- visually separated from the marker even when the source wasn't.
+  local restore_prefix = indent .. resolved.before
+
+  return {
+    prefix = prefix,
+    restore_prefix = restore_prefix,
+    suffix = suffix,
+    kind = resolved.kind,
+  }
 end
 
 ---Strips the common comment marker (prefix and, for block kind, suffix) from
@@ -134,14 +145,25 @@ function M.strip(lines, filetype, bufnr)
   return stripped, ctx
 end
 
+---@class cbox.comment.restore_opts
+---@field canonicalize? boolean  when true (default), use `ctx.restore_prefix` (the canonical "marker + space" from the template) so wraps emit a clean "# ┌...┐" even if the source line was "#box".  Pass `false` to use the actual line prefix verbatim — for trailing/empty wraps that don't consume the line's content, where injecting a canonical space would visually shift the original text.
+
 ---Restores the stored prefix (and suffix for block kind) to every line.
 ---For block kind, pads each line up to the max display width before
 ---appending the suffix so the closing delimiter aligns across rows.
 ---@param lines string[]
 ---@param ctx cbox.comment.ctx
+---@param opts? cbox.comment.restore_opts
 ---@return string[]
-function M.restore(lines, ctx)
-  local prefix = ctx.prefix
+function M.restore(lines, ctx, opts)
+  opts = opts or {}
+  local canonicalize = opts.canonicalize ~= false
+  local prefix
+  if canonicalize then
+    prefix = ctx.restore_prefix or ctx.prefix
+  else
+    prefix = ctx.prefix
+  end
   local suffix = ctx.suffix or ""
 
   local max_w = 0

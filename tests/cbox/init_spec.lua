@@ -451,58 +451,230 @@ describe("cbox (init)", function()
         "## └───────┘",
       }, get_lines(bufnr))
     end)
+
+    it(
+      "blockwise selection that overlaps the comment prefix wraps just the post-prefix content",
+      function()
+        -- <C-v> from col 2 (the space inside `# `) through col 5 (end of box)
+        -- on three commented rows.  The selection's start is inside the
+        -- comment prefix; clamping treats it as "the part of the selection
+        -- that's inside the stripped content" — equivalent to a V-style box
+        -- around the post-prefix content.
+        local bufnr = h.make_buf({ "# box", "# box", "# box" }, "nix")
+        h.with_visual(bufnr, 1, 3, 2, 5, "\22", function()
+          cbox.box("thin")
+        end)
+        assert.are.same({
+          "# ┌─────┐",
+          "# │ box │",
+          "# │ box │",
+          "# │ box │",
+          "# └─────┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "wrap canonicalizes the comment prefix: `#box` (no space) becomes `# ┌...┐`",
+      function()
+        local bufnr = h.make_buf({ "#box" }, "nix")
+        place_cursor(bufnr, 1, 1) -- cursor on 'b'
+        cbox.box("thin")
+        assert.are.same({
+          "# ┌─────┐",
+          "# │ box │",
+          "# └─────┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "normal-mode toggle on `#box` content row inside a tiny adjacent box: merge with canonical prefix",
+      function()
+        -- The line above and below are border rows of an existing tiny box.
+        -- Toggling on `box` of `#box│   │` wraps the word and merges the new
+        -- box's borders into the existing ones, canonicalizing `#` → `# `.
+        local bufnr = h.make_buf({
+          "#   ┌───┐",
+          "#box│   │",
+          "#   └───┘",
+        }, "nix")
+        place_cursor(bufnr, 2, 1) -- on 'b' of "#box"
+        cbox.toggle("thin")
+        assert.are.same({
+          "# ┌─────┐┌───┐",
+          "# │ box ││   │",
+          "# └─────┘└───┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "<C-v> blockwise wrap on a non-leading column preserves the actual prefix verbatim",
+      function()
+        -- Trailing-style wrap (content_start > 1) should leave the original
+        -- "#" prefix alone — silently inserting the canonical space would
+        -- visually shift the surviving "#box" to "# box".
+        local bufnr = h.make_buf({ "#boxA", "#boxA", "#boxA" }, "nix")
+        h.with_visual(bufnr, 1, 3, 5, 5, "\22", function()
+          cbox.box("thin")
+        end)
+        assert.are.same({
+          "#   ┌───┐",
+          "#box│ A │",
+          "#box│ A │",
+          "#box│ A │",
+          "#   └───┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "<C-v> word-wrap inside an existing 3-row tiny box: merge with canonical prefix",
+      function()
+        local bufnr = h.make_buf({
+          "#   ┌───┐",
+          "#box│   │",
+          "#box│   │",
+          "#box│   │",
+          "#   └───┘",
+        }, "nix")
+        -- Visual block on the `box` chars across rows 2-4, cols 2-4.
+        h.with_visual(bufnr, 2, 4, 2, 4, "\22", function()
+          cbox.box("thin")
+        end)
+        assert.are.same({
+          "# ┌─────┐┌───┐",
+          "# │ box ││   │",
+          "# │ box ││   │",
+          "# │ box ││   │",
+          "# └─────┘└───┘",
+        }, get_lines(bufnr))
+      end
+    )
   end)
 
   describe("V-line indent and alignment round-trip", function()
-    it("hoists common leading whitespace of content into the box indent", function()
-      local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
-      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
-        cbox.box("thin")
-      end)
-      assert.are.same({
-        "#   ┌─────┐",
-        "#   │ foo │",
-        "#   │ bar │",
-        "#   └─────┘",
-      }, get_lines(bufnr))
-    end)
+    it(
+      "V-line wrap places the box at line start; leading whitespace is content",
+      function()
+        local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
+        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+          cbox.box("thin")
+        end)
+        assert.are.same({
+          "# ┌───────┐",
+          "# │   foo │",
+          "# │   bar │",
+          "# └───────┘",
+        }, get_lines(bufnr))
+      end
+    )
 
-    it("differential indent past the common leading is preserved as content", function()
+    it("differing leading whitespace is preserved per-row as content", function()
       local bufnr = h.make_buf({ "#   foo", "#     bar" }, "nix")
       h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
         cbox.box("thin")
       end)
       assert.are.same({
-        "#   ┌───────┐",
-        "#   │ foo   │",
-        "#   │   bar │",
-        "#   └───────┘",
+        "# ┌─────────┐",
+        "# │   foo   │",
+        "# │     bar │",
+        "# └─────────┘",
       }, get_lines(bufnr))
     end)
 
-    it("unwrap recovers the indent from an indented V-line box", function()
-      local bufnr = h.make_buf({
-        "#   ┌─────┐",
-        "#   │ foo │",
-        "#   │ bar │",
-        "#   └─────┘",
-      }, "nix")
-      h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
-        cbox.unbox()
-      end)
-      assert.are.same({ "#   foo", "#   bar" }, get_lines(bufnr))
-    end)
+    it(
+      "unwrap of a pre-existing indented V-line box preserves the indent before the side char",
+      function()
+        local bufnr = h.make_buf({
+          "#   ┌─────┐",
+          "#   │ foo │",
+          "#   │ bar │",
+          "#   └─────┘",
+        }, "nix")
+        h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
+          cbox.unbox()
+        end)
+        assert.are.same({ "#   foo", "#   bar" }, get_lines(bufnr))
+      end
+    )
 
-    it("toggle round-trips an indented V-line box back to its source", function()
-      local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
-      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
-        cbox.toggle("thin")
-      end)
-      h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
-        cbox.toggle("thin")
-      end)
-      assert.are.same({ "#   foo", "#   bar" }, get_lines(bufnr))
-    end)
+    it(
+      "toggle V-line strips comment-internal leading whitespace (round-trip lossy on first cycle, idempotent after)",
+      function()
+        local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
+        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+          cbox.toggle("thin")
+        end)
+        h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
+          cbox.toggle("thin")
+        end)
+        assert.are.same({ "# foo", "# bar" }, get_lines(bufnr))
+
+        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+          cbox.toggle("thin")
+        end)
+        h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
+          cbox.toggle("thin")
+        end)
+        assert.are.same({ "# foo", "# bar" }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "V-line wrap with align=center: leading whitespace shifts content right uniformly",
+      function()
+        local bufnr = h.make_buf({ "box", "  box", "    box" })
+        h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
+          cbox.box({ style = "thin", width = 15, align = "center" })
+        end)
+        -- All rows share the core "box" (w=3), so center_min_lpad = (11-3)/2
+        -- = 4 floor.  Each row's leading whitespace is then preserved in
+        -- place, shifting `b` rightward by exactly leading-ws-width per row.
+        assert.are.same({
+          "┌─────────────┐",
+          "│     box     │",
+          "│       box   │",
+          "│         box │",
+          "└─────────────┘",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "toggle V-line align=center round-trips: relative leading whitespace recovered",
+      function()
+        local bufnr = h.make_buf({ "box", "  box", "    box" })
+        h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
+          cbox.toggle({ style = "thin", width = 15, align = "center" })
+        end)
+        h.with_visual(bufnr, 2, 4, nil, nil, "V", function()
+          cbox.toggle({ style = "thin", width = 15, align = "center" })
+        end)
+        assert.are.same({ "box", "  box", "    box" }, get_lines(bufnr))
+      end
+    )
+
+    it(
+      "unwrap of a multi-row centered box recovers relative leading whitespace via min-baseline",
+      function()
+        -- Pre-existing centered box where content starts at different cols
+        -- per row.  The leftmost `b` (row 1) becomes the baseline; later rows
+        -- recover (their content_start - leftmost) leading spaces.
+        local bufnr = h.make_buf({
+          "┌─────────────┐",
+          "│     box     │",
+          "│       box   │",
+          "│         box │",
+          "└─────────────┘",
+        })
+        h.with_visual(bufnr, 1, 5, nil, nil, "V", function()
+          cbox.unbox()
+        end)
+        assert.are.same({ "box", "  box", "    box" }, get_lines(bufnr))
+      end
+    )
 
     it("unwrap of a wide centered box recovers tight content (loses padding)", function()
       -- This is the user's reported case: width=80 align=center wraps "# box"
