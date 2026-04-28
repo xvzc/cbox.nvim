@@ -246,36 +246,63 @@ local function vline_block_wrap(sel, bufnr, opts)
     if strip_ctx then
       outer_indent = strip_ctx.prefix:match("^(%s*)") or ""
     else
-      -- Plain text: longest common leading whitespace.
-      outer_indent = stripped[1]:match("^(%s*)") or ""
-      for i = 2, #stripped do
-        local row_indent = stripped[i]:match("^(%s*)") or ""
-        while #outer_indent > 0 and not vim.startswith(row_indent, outer_indent) do
-          outer_indent = outer_indent:sub(1, -2)
+      outer_indent = ""
+    end
+  end
+  -- Compute the longest common leading whitespace of the stripped content
+  -- (in bytes) — this becomes additional outer indent on top of whatever
+  -- the comment/dangling context already gave us.  Trailing whitespace is
+  -- always dropped (symmetric with unwrap).
+  if mode == "none" or mode == "closer" then
+    local lead = nil
+    for _, line in ipairs(stripped) do
+      if line:match("%S") then
+        local row_lead = line:match("^(%s*)") or ""
+        if lead == nil then
+          lead = row_lead
+        else
+          while #lead > 0 and not vim.startswith(row_lead, lead) do
+            lead = lead:sub(1, -2)
+          end
+          if #lead == 0 then
+            break
+          end
         end
-        if outer_indent == "" then
-          break
-        end
-      end
-      for i, line in ipairs(stripped) do
-        stripped[i] = line:sub(#outer_indent + 1)
       end
     end
-  elseif mode == "closer" then
-    -- The selection sits inside an existing spanning context; its leading
-    -- whitespace IS the box's column — emit the box at that indent.
-    outer_indent = stripped[1]:match("^(%s*)") or ""
-    for i = 2, #stripped do
-      local row_indent = stripped[i]:match("^(%s*)") or ""
-      while #outer_indent > 0 and not vim.startswith(row_indent, outer_indent) do
-        outer_indent = outer_indent:sub(1, -2)
-      end
-      if outer_indent == "" then
-        break
-      end
-    end
+    lead = lead or ""
     for i, line in ipairs(stripped) do
-      stripped[i] = line:sub(#outer_indent + 1)
+      stripped[i] = line:sub(#lead + 1):gsub("%s+$", "")
+    end
+    if mode == "closer" then
+      -- For closer-only, the selection's leading IS the box's column.
+      outer_indent = lead
+    else
+      outer_indent = outer_indent .. lead
+    end
+  elseif mode == "both" or mode == "opener" then
+    -- For both/opener modes, strip min common leading inside the spanning
+    -- context.  Any remaining inner leading becomes additional content
+    -- (preserving relative indentation between rows).
+    local lead = nil
+    for _, line in ipairs(stripped) do
+      if line:match("%S") then
+        local row_lead = line:match("^(%s*)") or ""
+        if lead == nil then
+          lead = row_lead
+        else
+          while #lead > 0 and not vim.startswith(row_lead, lead) do
+            lead = lead:sub(1, -2)
+          end
+          if #lead == 0 then
+            break
+          end
+        end
+      end
+    end
+    lead = lead or ""
+    for i, line in ipairs(stripped) do
+      stripped[i] = line:sub(#lead + 1):gsub("%s+$", "")
     end
   end
 

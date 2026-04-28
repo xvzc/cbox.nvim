@@ -760,16 +760,38 @@ function M.wrap(snap, preset, presets, opts)
 
   local content_start, content_end
   if snap.is_linewise then
-    -- V-line: box's left edge sits at the start of the line (after any comment
-    -- prefix, which `comment.restore` re-attaches).  Leading whitespace inside
-    -- the line is content, not box indent — selection mode encodes intent, and
-    -- "V" means "wrap this whole line".
+    -- V-line: normalize the stripped content before wrapping.  Trim
+    -- trailing whitespace from each row (so it doesn't leak into the
+    -- box's `suffix` slot), then compute the min common leading
+    -- whitespace and the max display width.  The min lead becomes the
+    -- box's outer indent (preserved as `prefix_bytes` per row); per-row
+    -- leading beyond the min stays as content (preserves relative
+    -- indentation across rows).  Wrap is now symmetric with unwrap, which
+    -- already recovers leading via min-baseline and trims trailing.
+    for i, line in ipairs(stripped) do
+      stripped[i] = line:gsub("%s+$", "")
+    end
+    local min_lead = math.huge
+    for _, line in ipairs(stripped) do
+      if line:match("%S") then
+        local d = vim.fn.strdisplaywidth(line:match("^( *)") or "")
+        if d < min_lead then
+          min_lead = d
+        end
+      end
+    end
+    if min_lead == math.huge then
+      min_lead = 0
+    end
     local max_disp = 0
     for _, line in ipairs(stripped) do
-      max_disp = math.max(max_disp, vim.fn.strdisplaywidth(line))
+      local d = vim.fn.strdisplaywidth(line)
+      if d > max_disp then
+        max_disp = d
+      end
     end
-    content_start = 1
-    content_end = math.max(max_disp, 1)
+    content_start = min_lead + 1
+    content_end = math.max(max_disp, content_start)
   else
     if snap.end_col < snap.start_col or snap.end_col - snap.start_col > 10000 then
       return {}

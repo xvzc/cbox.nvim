@@ -561,34 +561,40 @@ describe("cbox (init)", function()
   end)
 
   describe("V-line indent and alignment round-trip", function()
-    it(
-      "V-line wrap places the box at line start; leading whitespace is content",
-      function()
-        local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
-        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
-          cbox.box("thin")
-        end)
-        assert.are.same({
-          "# ┌───────┐",
-          "# │   foo │",
-          "# │   bar │",
-          "# └───────┘",
-        }, get_lines(bufnr))
-      end
-    )
-
-    it("differing leading whitespace is preserved per-row as content", function()
-      local bufnr = h.make_buf({ "#   foo", "#     bar" }, "nix")
+    it("V-line wrap normalizes uniform leading whitespace into outer indent", function()
+      -- Min common leading whitespace inside the comment (after `# ` strip)
+      -- becomes part of the box's outer indent — wrap is symmetric with
+      -- unwrap's min-baseline recovery, so round-trip is lossless.
+      local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
       h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
         cbox.box("thin")
       end)
       assert.are.same({
-        "# ┌─────────┐",
-        "# │   foo   │",
-        "# │     bar │",
-        "# └─────────┘",
+        "#   ┌─────┐",
+        "#   │ foo │",
+        "#   │ bar │",
+        "#   └─────┘",
       }, get_lines(bufnr))
     end)
+
+    it(
+      "differing leading whitespace strips the min and preserves the rest as content",
+      function()
+        -- 3 / 5 leading inside comment.  Min = 3 → strip 3, leaving content
+        -- "" / "  " (relative indents preserved across rows).  Trailing is
+        -- always trimmed.
+        local bufnr = h.make_buf({ "#   foo", "#     bar" }, "nix")
+        h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+          cbox.box("thin")
+        end)
+        assert.are.same({
+          "#   ┌───────┐",
+          "#   │ foo   │",
+          "#   │   bar │",
+          "#   └───────┘",
+        }, get_lines(bufnr))
+      end
+    )
 
     it(
       "unwrap of a pre-existing indented V-line box preserves the indent before the side char",
@@ -607,7 +613,7 @@ describe("cbox (init)", function()
     )
 
     it(
-      "toggle V-line strips comment-internal leading whitespace (round-trip lossy on first cycle, idempotent after)",
+      "toggle V-line round-trips losslessly (wrap normalizes leading, unwrap recovers via min-baseline)",
       function()
         local bufnr = h.make_buf({ "#   foo", "#   bar" }, "nix")
         h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
@@ -616,7 +622,7 @@ describe("cbox (init)", function()
         h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
           cbox.toggle("thin")
         end)
-        assert.are.same({ "# foo", "# bar" }, get_lines(bufnr))
+        assert.are.same({ "#   foo", "#   bar" }, get_lines(bufnr))
 
         h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
           cbox.toggle("thin")
@@ -624,7 +630,7 @@ describe("cbox (init)", function()
         h.with_visual(bufnr, 2, 3, nil, nil, "V", function()
           cbox.toggle("thin")
         end)
-        assert.are.same({ "# foo", "# bar" }, get_lines(bufnr))
+        assert.are.same({ "#   foo", "#   bar" }, get_lines(bufnr))
       end
     )
 
@@ -1017,6 +1023,39 @@ describe("cbox (init)", function()
           "     │ box │",
           "     │ box │",
           "     └─────┘ */",
+        }, get_lines(bufnr))
+      end
+    )
+
+    it("V-line block wrap normalizes uniform leading whitespace", function()
+      -- Plain text rows all share 2-space leading.  The wrap pulls that out
+      -- as outer indent (where the spanning's `/*` sits) and emits the box
+      -- inside.  Trailing whitespace is dropped.
+      local bufnr = h.make_buf({ "  foo   ", "  bar  " }, "c")
+      h.with_visual(bufnr, 1, 2, nil, nil, "V", function()
+        cbox.box({ theme = "thin", visual_line = { style = "block" } })
+      end)
+      assert.are.same({
+        "  /* ┌─────┐",
+        "     │ foo │",
+        "     │ bar │",
+        "     └─────┘ */",
+      }, get_lines(bufnr))
+    end)
+
+    it(
+      "V-line block wrap preserves relative indentation across rows when min lead is 0",
+      function()
+        local bufnr = h.make_buf({ "base", "  base", "    base" }, "c")
+        h.with_visual(bufnr, 1, 3, nil, nil, "V", function()
+          cbox.box({ theme = "thin", visual_line = { style = "block" } })
+        end)
+        assert.are.same({
+          "/* ┌──────────┐",
+          "   │ base     │",
+          "   │   base   │",
+          "   │     base │",
+          "   └──────────┘ */",
         }, get_lines(bufnr))
       end
     )
