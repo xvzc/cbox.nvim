@@ -3,6 +3,7 @@ Table of Contents                                                *cbox.contents*
 
 cbox.nvim ······························································· |cbox|
 API ································································· |cbox.api|
+VLine block wrap ············································ |cbox.vline_block|
 Render ··························································· |cbox.render|
 Comment ························································· |cbox.comment|
 Detect ··························································· |cbox.detect|
@@ -80,7 +81,19 @@ M.setup({opts?})                                                    *cbox.setup*
 <
 
 
-M.box()                                                               *cbox.box*
+M.box({opts?})                                                        *cbox.box*
+    Wraps the visual selection (or the word under the cursor in normal mode)
+    in a comment box.
+
+    Parameters: ~
+        {opts?}  (cbox.opts)
+
+    Usage: ~
+>lua
+        vim.keymap.set("v", "<leader>cb", function()
+          require("cbox").box({ theme = "double" })
+        end)
+<
 
 
 M.unbox()                                                           *cbox.unbox*
@@ -144,6 +157,37 @@ M.unwrap({sel}, {bufnr?})                                      *cbox.api.unwrap*
     Parameters: ~
         {sel}     (cbox.detect.selection)
         {bufnr?}  (integer)
+
+
+==============================================================================
+VLine block wrap                                              *cbox.vline_block*
+
+V-line spanning block wrap.  When the user wraps a V-line selection with
+`visual_line.style = "block"` AND the filetype has a block template,
+|cbox.vline_block.wrap| emits a single spanning block comment around
+the whole box instead of per-row line comments.
+
+Four input shapes are recognized:
+  - `"both"`   — selection contains a full `/* ... */` pair (or no comment
+                 context); emit standard spanning around the new box.
+  - `"opener"` — selection starts with `/*` but the closer sits OUTSIDE
+                 the selection; emit `/*` on its own row above the box.
+  - `"closer"` — selection ends with `*/` but the opener sits OUTSIDE;
+                 append `*/` to the box's last row.
+  - `"none"`   — no comment context; wrap as standard spanning.
+
+M.wrap({sel}, {bufnr}, {opts})                           *cbox.vline_block.wrap*
+    Wraps a V-line selection with a spanning block comment.  Returns true on
+    success; false when the filetype has no block template (caller should
+    fall back to the regular per-row wrap).
+
+    Parameters: ~
+        {sel}    (cbox.detect.selection)
+        {bufnr}  (integer)
+        {opts}   (cbox.opts)
+
+    Returns: ~
+        (boolean)
 
 
 ==============================================================================

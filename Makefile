@@ -17,6 +17,7 @@ _gen-docs:
 	lemmy-help -f -t \
 		lua/cbox/init.lua \
 		lua/cbox/api.lua \
+		lua/cbox/vline_block.lua \
 		lua/cbox/render.lua \
 		lua/cbox/comment.lua \
 		lua/cbox/detect.lua \

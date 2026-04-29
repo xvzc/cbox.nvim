@@ -248,8 +248,28 @@ function M.wrap(sel, bufnr, opts)
   local presets = cfg.presets
   local preset = presets[opts.theme or cfg.theme]
 
-  local boxes = detect.find_boxes(sel, bufnr)
   local linewise = detect.is_linewise(sel)
+
+  -- V-line wrap with `visual_line.style = "block"`: route through the
+  -- spanning-block emitter when the filetype has a block template.  If
+  -- there's no block template, fall through to the regular wrap.
+  if linewise and opts.visual_line and opts.visual_line.style == "block" then
+    if require("cbox.vline_block").wrap(sel, bufnr, opts) then
+      return
+    end
+  end
+
+  -- Flatten visual_line.width/align onto opts for the per-row render path.
+  -- Only applies when the selection is V-line — non-V-line wraps ignore
+  -- width/align entirely.
+  if linewise and opts.visual_line then
+    opts = vim.tbl_extend("force", opts, {
+      width = opts.visual_line.width,
+      align = opts.visual_line.align,
+    })
+  end
+
+  local boxes = detect.find_boxes(sel, bufnr)
 
   if not linewise and #boxes > 0 then
     merge_overlapping(sel, bufnr, boxes, preset, presets, opts)
