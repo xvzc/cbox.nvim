@@ -2,6 +2,8 @@
 
 ---@mod cbox cbox.nvim
 ---@brief [[
+---                                                                  *cbox.nvim*
+---
 ---Comment-box drawing for Neovim.
 ---
 ---Three top-level commands wrap the current visual selection (or the word
