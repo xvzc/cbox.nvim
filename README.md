@@ -1,7 +1,5 @@
 # cbox.nvim
 
-> **Experimental.** APIs may change without notice.
-
 Comment-box drawing for Neovim. Wraps the visual selection (or the word under the cursor) in a configurable border, preserving per-filetype comment prefixes.
 
 ```text
@@ -16,15 +14,7 @@ Comment-box drawing for Neovim. Wraps the visual selection (or the word under th
 
 ## Installation
 
-**lazy.nvim** — minimal:
-
-```lua
-{ "xvzc/cbox.nvim" }
-```
-
-Defaults are pre-loaded by `plugin/cbox.lua`, so no `setup()` call is required for the out-of-the-box behavior.
-
-**With a keymap** — `gb` toggles a spanning block comment around the V-line selection (or wraps the cursor word in normal mode):
+**lazy.nvim** — `gb` toggles a spanning block comment around the V-line selection (or wraps the cursor word in normal mode):
 
 ```lua
 {
@@ -35,7 +25,7 @@ Defaults are pre-loaded by `plugin/cbox.lua`, so no `setup()` call is required f
       "gb",
       mode = { "n", "x" },
       function()
-        require("cbox").toggle({ theme = "thin", visual_line = { style = "block" } })
+        require("cbox").toggle({ theme = "bold", visual_line = { style = "block" } })
       end,
       desc = "cbox: toggle",
     },
@@ -43,11 +33,11 @@ Defaults are pre-loaded by `plugin/cbox.lua`, so no `setup()` call is required f
 }
 ```
 
-`visual_line.style = "block"` only takes effect for V-line selections; normal-mode `gb` wraps the cursor word with the regular per-row line comment.
+Defaults are pre-loaded by `plugin/cbox.lua`, so no `setup()` call is required.  `visual_line.style = "block"` only takes effect for V-line selections; normal-mode `gb` wraps the cursor word with the regular per-row line comment.
 
 ## Configuration
 
-`setup()` is optional — defaults are pre-loaded. Override only what you need.
+Override only what you need:
 
 ```lua
 require("cbox").setup({
@@ -61,10 +51,6 @@ require("cbox").setup({
     align = "left",  -- "left" | "right" | "center"
   },
   presets = {
-    bold   = { "┏", "━", "┓", "┃", "┃", "┗", "━", "┛" },
-    thin   = { "┌", "─", "┐", "│", "│", "└", "─", "┘" },
-    double = { "╔", "═", "╗", "║", "║", "╚", "═", "╝" },
-    ascii  = { "+", "-", "+", "|", "|", "+", "-", "+" },
     -- add your own:
     rounded = { "╭", "─", "╮", "│", "│", "╰", "─", "╯" },
   },
@@ -74,10 +60,7 @@ require("cbox").setup({
     --     whether non-whitespace chars follow the placeholder, OR
     --   - a `{ line?, block? }` table that names both variants.
     -- Filetypes not listed fall back to `vim.bo.commentstring`.
-    c    = { line = "// %s", block = "/* %s */" },
-    lua  = { line = "-- %s", block = "--[[ %s --]]" },
-    html = "<!-- %s -->",     -- block-only is fine; auto-classified
-    nix  = "# %s",
+    fennel = { line = ";; %s", block = "(comment %s)" },
   },
 })
 ```
@@ -86,17 +69,7 @@ A preset is an 8-element list: top-left, top-fill, top-right, left side, right s
 
 ## Usage
 
-Three top-level commands operate on the visual selection (or the word under the cursor in normal mode):
-
-```lua
-local cbox = require("cbox")
-
-vim.keymap.set({ "n", "v" }, "<leader>cb", cbox.box,    { desc = "cbox: draw"   })
-vim.keymap.set({ "n", "v" }, "<leader>cu", cbox.unbox,  { desc = "cbox: strip"  })
-vim.keymap.set({ "n", "v" }, "<leader>cc", cbox.toggle, { desc = "cbox: toggle" })
-```
-
-Each accepts an optional `opts` table:
+`cbox.box`, `cbox.unbox`, and `cbox.toggle` operate on the visual selection (or the word under the cursor in normal mode).  Each accepts an optional `opts` table:
 
 ```lua
 cbox.box({ theme = "double" })
