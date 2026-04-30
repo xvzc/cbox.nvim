@@ -16,16 +16,34 @@ Comment-box drawing for Neovim. Wraps the visual selection (or the word under th
 
 ## Installation
 
-**lazy.nvim**
+**lazy.nvim** — minimal:
+
+```lua
+{ "xvzc/cbox.nvim" }
+```
+
+Defaults are pre-loaded by `plugin/cbox.lua`, so no `setup()` call is required for the out-of-the-box behavior.
+
+**With a keymap** — `gb` toggles a spanning block comment around the V-line selection (or wraps the cursor word in normal mode):
 
 ```lua
 {
   "xvzc/cbox.nvim",
-  config = function()
-    require("cbox").setup()
-  end,
+  event = "VeryLazy",
+  keys = {
+    {
+      "gb",
+      mode = { "n", "x" },
+      function()
+        require("cbox").toggle({ theme = "thin", visual_line = { style = "block" } })
+      end,
+      desc = "cbox: toggle",
+    },
+  },
 }
 ```
+
+`visual_line.style = "block"` only takes effect for V-line selections; normal-mode `gb` wraps the cursor word with the regular per-row line comment.
 
 ## Configuration
 
@@ -33,7 +51,15 @@ Comment-box drawing for Neovim. Wraps the visual selection (or the word under th
 
 ```lua
 require("cbox").setup({
-  style = "thin",  -- default preset name from `presets`
+  theme = "thin",  -- default preset name from `presets`
+  visual_line = {
+    -- V-line-only wrap options (ignored for normal-mode and blockwise wraps).
+    style = "line",  -- "line": per-row markers // box ...
+                     -- "block": single spanning /* ┌...┐ ... └...┘ */
+                     --          (only when the filetype has a block template)
+    width = nil,     -- fixed total display width (default: auto-fit)
+    align = "left",  -- "left" | "right" | "center"
+  },
   presets = {
     bold   = { "┏", "━", "┓", "┃", "┃", "┗", "━", "┛" },
     thin   = { "┌", "─", "┐", "│", "│", "└", "─", "┘" },
@@ -43,12 +69,15 @@ require("cbox").setup({
     rounded = { "╭", "─", "╮", "│", "│", "╰", "─", "╯" },
   },
   comment_str = {
-    -- per-filetype comment template, a single string with a "%s" placeholder.
-    -- Block-form ("/* %s */") is used only for filetypes with no line-comment
-    -- syntax.  Filetypes not listed here fall back to `vim.bo.commentstring`.
-    lua = "-- %s",
-    html = "<!-- %s -->",
-    nix = "# %s",
+    -- Per-filetype comment template.  An entry is either:
+    --   - a single string with `%s`, auto-classified as line/block by
+    --     whether non-whitespace chars follow the placeholder, OR
+    --   - a `{ line?, block? }` table that names both variants.
+    -- Filetypes not listed fall back to `vim.bo.commentstring`.
+    c    = { line = "// %s", block = "/* %s */" },
+    lua  = { line = "-- %s", block = "--[[ %s --]]" },
+    html = "<!-- %s -->",     -- block-only is fine; auto-classified
+    nix  = "# %s",
   },
 })
 ```
@@ -70,8 +99,9 @@ vim.keymap.set({ "n", "v" }, "<leader>cc", cbox.toggle, { desc = "cbox: toggle" 
 Each accepts an optional `opts` table:
 
 ```lua
-cbox.box({ style = "double" })
-cbox.box({ width = 60, align = "center" })
+cbox.box({ theme = "double" })
+cbox.box({ visual_line = { width = 60, align = "center" } })
+cbox.box({ visual_line = { style = "block" } })  -- spanning /* ... */ around the whole box
 ```
 
 Comment prefixes are detected and preserved automatically. Selecting `// foo bar` in a `.c` buffer and toggling produces:
@@ -82,8 +112,17 @@ Comment prefixes are detected and preserved automatically. Selecting `// foo bar
 // └─────────┘
 ```
 
-`toggle()` resolves wrap vs. strip from context: if the selection sits inside a clean box it strips; if it overlaps a partial box it redraws; if there's no box it wraps. See `:help cbox` for the full dispatch table.
+V-line selection with `visual_line.style = "block"` emits a single spanning block comment around the whole box instead of per-row markers:
+
+```c
+/* ┌─────────┐
+   │ foo bar │
+   │ baz qux │
+   └─────────┘ */
+```
+
+`toggle()` resolves wrap vs. strip from context: if the selection sits inside a clean box it strips; if it overlaps a partial box it redraws; if there's no box it wraps. See `:help cbox.nvim` for the full dispatch table.
 
 ## Help
 
-Once installed, `:help cbox` shows the generated reference. The source is `doc/cbox.nvim.txt`.
+Once installed, `:help cbox.nvim` (or `:help cbox`) shows the generated reference. The source is `doc/cbox.nvim.txt`.
